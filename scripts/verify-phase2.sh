@@ -254,6 +254,14 @@ fi
 # 4. Create instance (Test 2)
 # ===========================================================================
 hdr 4 "Create instance (UAT Test 2)"
+# Idempotency: drop any leftover instance for THIS domain (e.g. from a prior
+# --keep run) so create starts clean and does not spuriously 409. Only the test
+# domain is touched; other instances are left alone.
+PREID="$(jget "$(body_of "$(api GET /api/v1/instances/)")" "next((str(r['id']) for r in (d or []) if r.get('domain')=='$TEST_DOMAIN'), '')")"
+if [[ -n "$PREID" ]]; then
+    info "removing leftover instance id=$PREID for $TEST_DOMAIN (clean slate)"
+    api DELETE "/api/v1/instances/$PREID" >/dev/null
+fi
 R="$(api POST /api/v1/instances/ "{\"domain\":\"$TEST_DOMAIN\"}")"
 ST="$(status_of "$R")"; BODY="$(body_of "$R")"
 INSTANCE_ID=""; ALLOC_PORT=""
