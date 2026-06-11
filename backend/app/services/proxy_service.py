@@ -67,7 +67,11 @@ def build_nginx_instance_context(row: ProxyInstance) -> SimpleNamespace:
 
 
 def write_instance_toml(slug: str, secret: str, mtproto_port: int) -> Path:
-    template_dir = Path(__file__).parents[3] / "infra" / "mtg"
+    # Template ships inside the app package (backend/app/templates) so it is
+    # packaged into the image via `COPY app/ ./app/` — same pattern as
+    # nginx_service. A repo-relative path (parents[3]/infra/mtg) does not exist
+    # in the container, where the code lives at /backend/app with no /infra.
+    template_dir = Path(__file__).parent.parent / "templates"
     env = Environment(loader=FileSystemLoader(str(template_dir)))
     rendered = env.get_template("instance.config.toml.j2").render(
         secret=secret,
@@ -141,6 +145,21 @@ async def _get_required_instance(
     if row is None:
         raise InstanceNotFoundError("Instance not found")
     return row
+
+
+async def write_startup_nginx_config(session: AsyncSession) -> None:
+    """Render the active nginx.conf into the shared volume at startup.
+
+    The nginx container loads its config from the nginx-config volume
+    (`nginx -c /data/nginx/nginx.conf`). On a fresh boot that file must exist
+    before nginx starts, so we render it here (panel route + default + any
+    currently-running instances). No Docker calls and no SIGHUP — nginx is not
+    up yet; it reads this file on its own first start.
+    """
+    contexts = await _active_contexts(session)
+    config_str = nginx_service.render_nginx_config(settings.panel_domain, contexts)
+    nginx_service.write_candidate(config_str)
+    nginx_service.swap_nginx_config()
 
 
 async def reconcile_on_startup(session: AsyncSession, proxy_net_name: str) -> None:  # noqa: ARG001

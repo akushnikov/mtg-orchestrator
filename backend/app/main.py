@@ -20,7 +20,7 @@ from app.api.v1.router import api_router
 from app.db.engine import AsyncSessionLocal, engine
 from app.db.models import Base
 from app.services.docker_service import get_proxy_net_name
-from app.services.proxy_service import reconcile_on_startup
+from app.services.proxy_service import reconcile_on_startup, write_startup_nginx_config
 
 # Resolve paths relative to this file so the app works regardless of cwd.
 APP_DIR = Path(__file__).parent
@@ -35,6 +35,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     app.state.proxy_net_name = await get_proxy_net_name()
     async with AsyncSessionLocal() as session:
         await reconcile_on_startup(session, app.state.proxy_net_name)
+        # Seed the shared nginx-config volume so the nginx container has a valid
+        # config to load on its own first start (it depends on this backend
+        # being healthy before it boots).
+        await write_startup_nginx_config(session)
     try:
         yield
     finally:

@@ -187,7 +187,9 @@ if $DO_BUILD; then
     fi
     info "HEAD: $(git rev-parse --short HEAD 2>/dev/null)"
     $COMPOSE build backend && pass "docker compose build backend" || fail "docker compose build backend"
-    $COMPOSE up -d backend && pass "docker compose up -d backend" || fail "docker compose up -d backend"
+    # Bring up the WHOLE stack (not just backend): nginx config/volume/command
+    # changed and nginx now waits on backend health, so it must be recreated too.
+    $COMPOSE up -d && pass "docker compose up -d (full stack)" || fail "docker compose up -d"
 fi
 
 # ===========================================================================

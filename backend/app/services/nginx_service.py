@@ -53,8 +53,13 @@ def _validate_nginx_config_sync() -> bool:
     client = docker.DockerClient(base_url=settings.docker_host)
     container = client.containers.run(
         "nginx:1.27-alpine",
-        command=["nginx", "-t", "-c", "/etc/nginx/nginx.conf.candidate"],
-        volumes={"nginx-config": {"bind": "/etc/nginx", "mode": "ro"}},
+        # Mount the shared config volume at /data/nginx (NOT /etc/nginx): the
+        # rendered config `include`s /etc/nginx/mime.types, which must keep
+        # coming from the image. Mounting over /etc/nginx would shadow it and
+        # make `nginx -t` fail. The volume name must match the pinned compose
+        # volume name (docker-compose.yml: volumes.nginx-config.name).
+        command=["nginx", "-t", "-c", "/data/nginx/nginx.conf.candidate"],
+        volumes={"nginx-config": {"bind": "/data/nginx", "mode": "ro"}},
         detach=True,
         remove=False,
         log_config=LogConfig(

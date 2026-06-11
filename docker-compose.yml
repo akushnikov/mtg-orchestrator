@@ -34,44 +34,40 @@ services:
   # ---------------------------------------------------------------------------
   nginx:
     image: nginx:1.27-alpine
+    # Pinned container name so the backend can address it by a stable name for
+    # the graceful-reload SIGHUP (docker_service.send_sighup("nginx")). Without
+    # this, the container would be named <project>-nginx-1 and containers.get
+    # ("nginx") would 404.
+    container_name: nginx
     restart: unless-stopped
     ports:
       - "443:443"
       - "80:80"
-    environment:
-      # Rendered into the nginx stream SNI map by the official nginx image
-      # entrypoint (20-envsubst-on-templates.sh) at container start. nginx
-      # does NOT expand env vars itself — the entrypoint runs envsubst over
-      # the mounted template below before nginx starts.
-      PANEL_DOMAIN: ${PANEL_DOMAIN}
-      # Render templates straight into /etc/nginx so nginx.conf.template
-      # becomes /etc/nginx/nginx.conf (the default output dir is conf.d,
-      # which is wrong for a top-level nginx.conf with stream/http blocks).
-      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
-      # Restrict envsubst to ONLY ${PANEL_DOMAIN}; every nginx runtime
-      # variable ($ssl_preread_server_name, $host, $uri, ...) is left intact.
-      NGINX_ENVSUBST_FILTER: "PANEL_DOMAIN"
+    # The backend owns the active config: it renders nginx.conf into the shared
+    # nginx-config volume (at /data/nginx) on startup and on every topology
+    # change, then sends SIGHUP. nginx loads that file directly via -c. The
+    # `include /etc/nginx/mime.types` inside the rendered config still resolves
+    # from the image because we mount the volume at /data/nginx, not /etc/nginx.
+    command: ["nginx", "-c", "/data/nginx/nginx.conf", "-g", "daemon off;"]
     volumes:
-      # Bootstrap config TEMPLATE (committed). The nginx image entrypoint
-      # renders /etc/nginx/templates/*.template via envsubst into
-      # NGINX_ENVSUBST_OUTPUT_DIR (/etc/nginx) before starting nginx, so
-      # ${PANEL_DOMAIN} is substituted at container start. Phase 2+ the
-      # backend overwrites the rendered copy and reloads.
-      - ./infra/nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      # Shared rendered-config volume (backend writes, nginx reads). Read-only:
+      # nginx never writes here.
+      - nginx-config:/data/nginx:ro
       # Shared ACME webroot — nginx serves /.well-known/acme-challenge/
       # directly from this volume (certbot writes the challenge tokens here).
       - acme-webroot:/var/www/certbot:ro
     networks:
       - proxy-net
     depends_on:
-      # Soft dependencies: nginx resolves upstreams at request time via the
-      # embedded resolver, but declaring both upstreams reduces cold-start
-      # connection failures on `docker compose up`. mtg-default is the
-      # catch-all (default) route, so it matters most.
-      - backend
-      - mtg-default
+      # Hard gate: the backend seeds /data/nginx/nginx.conf during its lifespan
+      # startup, so nginx must not boot until the backend is healthy (and the
+      # config file exists). mtg-default is a soft dependency (catch-all route).
+      backend:
+        condition: service_healthy
+      mtg-default:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: ["CMD", "nginx", "-t", "-c", "/data/nginx/nginx.conf"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,11 +119,14 @@ services:
       - "8080"   # plain HTTP (dev / ACME path)
       - "8443"   # TLS (prod, when certs are issued)
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      # python:3.12-slim has no wget/curl — probe via python (stdlib urllib).
+      # nginx depends_on this becoming healthy, so it must reflect real
+      # readiness (the lifespan has run and /healthz responds).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     logging:
       driver: json-file
       options:
@@ -279,8 +278,11 @@ services:
 # =============================================================================
 volumes:
   nginx-config:
-    # Rendered nginx.conf written by the backend on topology changes (Phase 2+).
-    # Phase 1: not yet used (bootstrap config is bind-mounted from infra/nginx/).
+    # Rendered nginx.conf written by the backend (at /data/nginx) and read by
+    # the nginx container (also at /data/nginx, loaded via `nginx -c`). Pinned
+    # to a fixed name (no compose project prefix) so the backend's Docker-SDK
+    # validation container can mount it by the literal name "nginx-config".
+    name: nginx-config
   certs-volume:
     # Let's Encrypt certificates written by certbot, read by backend (uvicorn TLS).
   acme-webroot:
