@@ -33,7 +33,9 @@ def _create_mtg_container(slug: str, proxy_net_name: str, use_alias: bool = Fals
     name = f"mtg-{slug}"
     container = client.containers.run(
         "nineseconds/mtg:2",
-        command=["run", "--config", f"/data/mtg-configs/{slug}.toml"],
+        # mtg v2 takes the config path POSITIONALLY: `mtg run <config>`.
+        # There is no --config flag (mtg exits 80: "unknown flag --config").
+        command=["run", f"/data/mtg-configs/{slug}.toml"],
         name=name,
         detach=True,
         network=proxy_net_name,
