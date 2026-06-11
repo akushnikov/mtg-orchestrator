@@ -350,7 +350,7 @@ docker compose exec nginx grep -r resolver /etc/nginx/
 │           └── index.html  (placeholder — Phase 3 заменит на Vue 3)
 ├── infra/
 │   ├── nginx/
-│   │   └── nginx.conf     SNI mux (stream:443) + ACME handler (http:80)
+│   │   └── nginx.conf.template  SNI mux (stream:443) + ACME handler (http:80); рендерится envsubst при старте
 │   └── mtg/
 │       └── default.config.toml  Конфиг mtg-default (для Phase 2+)
 ├── scripts/
@@ -389,8 +389,11 @@ docker compose exec nginx grep -r resolver /etc/nginx/
 # Проверить конфигурацию compose без запуска
 docker compose --env-file .env config
 
-# Проверить синтаксис nginx конфига
-docker run --rm -v "${PWD}/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine nginx -t
+# Проверить синтаксис nginx конфига (шаблон рендерится envsubst, как в compose)
+docker run --rm -e PANEL_DOMAIN=panel.example.com `
+  -e NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx -e NGINX_ENVSUBST_FILTER=PANEL_DOMAIN `
+  -v "${PWD}/infra/nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro" `
+  nginx:1.27-alpine nginx -t
 ```
 
 ---
