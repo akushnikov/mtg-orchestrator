@@ -146,7 +146,26 @@ if (-not (Test-Path $MtgConf)) {
 } else {
     Write-Check "infra/mtg/default.config.toml exists" $true
     $MtgContent = Get-Content $MtgConf -Raw
-    Write-Check "No real secret committed (no 'ee' hex line)" (-not ($MtgContent -match '(?m)^\s*secret\s*=\s*"ee[0-9a-f]{32}'))
+
+    # No real secret committed — scan ALL tracked files (case-insensitive) for
+    # an mtg-style secret (ee|dd) + >=32 hex. The all-zeros placeholder in
+    # .env.example is allowed, so require a non-zero hex digit in the key body.
+    $SecretHits = @()
+    $GitAvail = Get-Command git -ErrorAction SilentlyContinue
+    if ($GitAvail) {
+        Push-Location $ScriptRoot
+        try {
+            $RawHits = & git grep -iIE '"(ee|dd)[0-9a-f]{32,}"' -- . 2>$null
+            $SecretHits = $RawHits | Where-Object { $_ -and ($_ -notmatch '(?i)"(ee|dd)0{32,}"') }
+        } finally {
+            Pop-Location
+        }
+        Write-Check "No real secret in tracked files (placeholder/comment only)" ($SecretHits.Count -eq 0) ($SecretHits -join "`n")
+    } else {
+        # Fallback: scan just the mtg config when git is unavailable.
+        $HasRealSecret = ($MtgContent -match '(?im)^\s*secret\s*=\s*"(ee|dd)[0-9a-f]{32,}') -and ($MtgContent -notmatch '(?i)"(ee|dd)0{32,}"')
+        Write-Check "No real secret committed (mtg config)" (-not $HasRealSecret)
+    }
     Write-Check "[stats.prometheus] section present" ($MtgContent -match "\[stats\.prometheus\]")
     Write-Check "blocked-subnets = [] (RFC1918 disabled)" ($MtgContent -match "blocked-subnets\s*=\s*\[\s*\]")
     Write-Check "bind-to uses 0.0.0.0 (not 127.0.0.1)" ($MtgContent -match "bind-to\s*=\s*""0\.0\.0\.0")

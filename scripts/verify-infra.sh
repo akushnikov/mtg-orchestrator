@@ -179,12 +179,26 @@ if [[ ! -f "$MTG_CONF" ]]; then
 else
     pass "infra/mtg/default.config.toml exists"
 
-    # No real secret committed (must not contain an "ee" + 32-hex secret value)
-    if grep -qP '^\s*secret\s*=\s*"ee[0-9a-f]{32}' "$MTG_CONF" 2>/dev/null || \
-       grep -qE '^\s*secret\s*=\s*"ee[0-9a-f]{32}' "$MTG_CONF" 2>/dev/null; then
-        fail "No real secret in committed config"
+    # No real secret committed — scan ALL tracked files (not just this config),
+    # case-insensitive, for an mtg-style secret: (ee|dd) + >=32 hex chars. The
+    # all-zeros placeholder in .env.example (ee000...0) is explicitly allowed,
+    # so the match requires at least one non-zero hex digit in the key body.
+    if check_cmd git && git -C "$REPO_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+        SECRET_HITS=$(git -C "$REPO_DIR" grep -iIE '"(ee|dd)[0-9a-f]{32,}"' -- . 2>/dev/null \
+            | grep -ivE '"(ee|dd)0{32,}"' || true)
+        if [[ -n "$SECRET_HITS" ]]; then
+            fail "No real secret in any tracked file" "$SECRET_HITS"
+        else
+            pass "No real secret in tracked files (placeholder/comment only)"
+        fi
     else
-        pass "No real secret in committed config (placeholder/comment only)"
+        # Fallback: scan just the mtg config when git is unavailable.
+        if grep -iE '^\s*secret\s*=\s*"(ee|dd)[0-9a-f]{32,}' "$MTG_CONF" 2>/dev/null \
+            | grep -iqvE '"(ee|dd)0{32,}"'; then
+            fail "No real secret in committed config"
+        else
+            pass "No real secret in committed config (placeholder/comment only)"
+        fi
     fi
 
     grep -q '\[stats\.prometheus\]'    "$MTG_CONF" && pass "[stats.prometheus] section present"  || fail "[stats.prometheus] section missing"
