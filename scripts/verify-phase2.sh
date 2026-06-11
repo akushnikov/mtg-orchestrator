@@ -458,9 +458,27 @@ fi
 # 15. Telegram reachability (Test 12) — manual
 # ===========================================================================
 hdr 15 "Telegram reachability (UAT Test 12 — manual)"
-info "Open the tg://proxy?... URL from Test 4 on a real Telegram client and"
-info "confirm it connects. This cannot be automated. Re-create with --keep if"
-info "you deleted the instance above."
+if [[ -n "${TG:-}" ]] && $KEEP; then
+    TME="${TG/tg:\/\/proxy?/https:\/\/t.me\/proxy?}"
+    echo "        Instance kept (--keep). Open ONE of these on your phone:"
+    echo ""
+    echo "          $TG"
+    echo "          $TME"
+    echo ""
+    echo "        (Contains the live proxy secret — do not paste this block into"
+    echo "         shared logs.)"
+    if command -v qrencode >/dev/null 2>&1; then
+        echo "        Scan the QR in Telegram (Settings -> Data and Storage -> Proxy):"
+        qrencode -t ANSIUTF8 "$TG" | sed 's/^/        /'
+    else
+        info "Tip: 'apt-get install -y qrencode' to print a scannable QR here."
+    fi
+elif [[ -n "${TG:-}" ]]; then
+    info "Instance was deleted (no --keep), so its URL is dead now."
+    info "Re-run with --keep to get a live URL:  bash scripts/verify-phase2.sh --domain $TEST_DOMAIN --keep"
+else
+    info "No instance created (create failed earlier) — nothing to open."
+fi
 
 # ===========================================================================
 # Summary
