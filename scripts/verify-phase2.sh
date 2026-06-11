@@ -155,9 +155,12 @@ slugify() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/\./_/g; s/[^a-z0-
 
 SLUG="$(slugify "$TEST_DOMAIN")"
 CNAME="mtg-${SLUG}"
-NGINX_VOL="$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E 'nginx-config$' | head -n1)"
+NGINX_VOL="$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -Fx nginx-config \
+            || docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E 'nginx-config$' | head -n1)"
 
-read_live_nginx()   { $COMPOSE exec -T nginx cat /etc/nginx/nginx.conf 2>/dev/null; }
+# nginx loads its active config from the shared volume at /data/nginx (nginx -c),
+# NOT /etc/nginx — read the file nginx actually serves.
+read_live_nginx()   { $COMPOSE exec -T nginx cat /data/nginx/nginx.conf 2>/dev/null; }
 read_rendered_nginx(){ $COMPOSE exec -T backend cat /data/nginx/nginx.conf 2>/dev/null; }
 
 echo ""
