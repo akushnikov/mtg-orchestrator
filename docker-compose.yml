@@ -133,7 +133,7 @@ services:
   # Joins socket-net ONLY. nginx and mtg containers have no route to it.
   # ---------------------------------------------------------------------------
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:0.4.2
+    image: tecnativa/docker-socket-proxy:v0.4.2
     restart: unless-stopped
     environment:
       # Allow only the endpoints the backend actually needs.
