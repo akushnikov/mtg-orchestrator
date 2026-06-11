@@ -28,7 +28,8 @@
 # =============================================================================
 
 set -uo pipefail   # NOT -e: we want to run every check and count failures
-IFS=$'\n\t'
+# NOTE: do NOT set IFS=$'\n\t' here — $COMPOSE holds "docker compose" (two
+# words) and is invoked unquoted, so it must word-split on spaces.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
