@@ -1,6 +1,18 @@
 # =============================================================================
 # nginx — SNI mux + ACME challenge handler — Phase 1 bootstrap configuration
 #
+# This is a TEMPLATE rendered by the official nginx image entrypoint
+# (docker-entrypoint.d/20-envsubst-on-templates.sh). The compose nginx
+# service mounts this file at /etc/nginx/templates/nginx.conf.template and
+# sets NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx, so on container start the
+# entrypoint runs envsubst and writes the rendered result to
+# /etc/nginx/nginx.conf.
+#
+# Only ${PANEL_DOMAIN} is substituted (NGINX_ENVSUBST_FILTER restricts
+# envsubst to that single variable); every nginx runtime variable below
+# ($ssl_preread_server_name, $proxy_upstream, $host, $request_uri, $uri)
+# is left untouched.
+#
 # Architecture:
 #   :443  stream/ssl_preread  →  map by SNI:
 #           exact ${PANEL_DOMAIN}  → backend:8443  (real TLS terminated by uvicorn)
@@ -10,8 +22,6 @@
 #
 # Phase 2+ note: the backend re-renders this file from a Jinja2 template and
 # writes the result to the nginx-config volume, triggering a graceful reload.
-# The envsubst placeholder ${PANEL_DOMAIN} in the stream map will be replaced
-# with the operator's actual subdomain during that rendering step.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -37,9 +47,8 @@ stream {
     # panel (Pitfall 3 from PITFALLS.md).
     map $ssl_preread_server_name $proxy_upstream {
         # Exact match for the panel subdomain → backend (real TLS).
-        # ${PANEL_DOMAIN} is replaced by envsubst / Jinja2 rendering in Phase 2.
-        # For Phase 1 the operator must edit this value or use envsubst to
-        # substitute the actual subdomain before the first deploy.
+        # ${PANEL_DOMAIN} is substituted by the nginx image entrypoint
+        # (envsubst) at container start from the PANEL_DOMAIN env var.
         "${PANEL_DOMAIN}"  backend:8443;
 
         # Default: route to the always-on default mtg instance (fake-TLS).

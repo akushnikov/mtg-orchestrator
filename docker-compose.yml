@@ -38,15 +38,28 @@ services:
     ports:
       - "443:443"
       - "80:80"
+    environment:
+      # Rendered into the nginx stream SNI map by the official nginx image
+      # entrypoint (20-envsubst-on-templates.sh) at container start. nginx
+      # does NOT expand env vars itself — the entrypoint runs envsubst over
+      # the mounted template below before nginx starts.
+      PANEL_DOMAIN: ${PANEL_DOMAIN}
+      # Render templates straight into /etc/nginx so nginx.conf.template
+      # becomes /etc/nginx/nginx.conf (the default output dir is conf.d,
+      # which is wrong for a top-level nginx.conf with stream/http blocks).
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      # Restrict envsubst to ONLY ${PANEL_DOMAIN}; every nginx runtime
+      # variable ($ssl_preread_server_name, $host, $uri, ...) is left intact.
+      NGINX_ENVSUBST_FILTER: "PANEL_DOMAIN"
     volumes:
-      # Bootstrap static config (committed). Phase 2+ the backend overwrites
-      # the rendered copy in nginx-config volume; mount order matters:
-      # The named volume entry shadows the bind at the same path. In Phase 2
-      # the backend writes to nginx-config and reloads. For Phase 1 the
-      # bootstrap file is the active config.
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Shared ACME webroot — nginx needs to see the challenge path is proxied
-      # to backend; backend serves /.well-known/acme-challenge/ from here.
+      # Bootstrap config TEMPLATE (committed). The nginx image entrypoint
+      # renders /etc/nginx/templates/*.template via envsubst into
+      # NGINX_ENVSUBST_OUTPUT_DIR (/etc/nginx) before starting nginx, so
+      # ${PANEL_DOMAIN} is substituted at container start. Phase 2+ the
+      # backend overwrites the rendered copy and reloads.
+      - ./infra/nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      # Shared ACME webroot — nginx serves /.well-known/acme-challenge/
+      # directly from this volume (certbot writes the challenge tokens here).
       - acme-webroot:/var/www/certbot:ro
     networks:
       - proxy-net
