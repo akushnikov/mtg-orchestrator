@@ -105,28 +105,56 @@ fi
 echo ""
 echo "[ 2 ] nginx configuration"
 
-NGINX_CONF="$REPO_DIR/infra/nginx/nginx.conf"
-if [[ ! -f "$NGINX_CONF" ]]; then
-    fail "infra/nginx/nginx.conf exists" "File not found: $NGINX_CONF"
+NGINX_TMPL="$REPO_DIR/infra/nginx/nginx.conf.template"
+if [[ ! -f "$NGINX_TMPL" ]]; then
+    fail "infra/nginx/nginx.conf.template exists" "File not found: $NGINX_TMPL"
 else
-    pass "infra/nginx/nginx.conf exists"
+    pass "infra/nginx/nginx.conf.template exists"
 
+    # The template is rendered by the nginx image entrypoint (envsubst) into
+    # /etc/nginx/nginx.conf at container start. Validate by mounting the
+    # template at /etc/nginx/templates/ and letting the entrypoint render it
+    # before `nginx -t`, so the test exercises the SAME rendering the running
+    # container uses. PANEL_DOMAIN is taken from the loaded .env (or a dummy).
     if check_cmd docker; then
+        RENDER_DOMAIN="${PANEL_DOMAIN:-panel.example.test}"
         if docker run --rm \
-            -v "$NGINX_CONF:/etc/nginx/nginx.conf:ro" \
+            -e PANEL_DOMAIN="$RENDER_DOMAIN" \
+            -e NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx \
+            -e NGINX_ENVSUBST_FILTER=PANEL_DOMAIN \
+            -v "$NGINX_TMPL:/etc/nginx/templates/nginx.conf.template:ro" \
             nginx:1.27-alpine nginx -t 2>&1; then
-            pass "nginx -t (syntax valid)"
+            pass "nginx -t (rendered template syntax valid)"
         else
-            fail "nginx -t (syntax)" "See output above"
+            fail "nginx -t (rendered template syntax)" "See output above"
+        fi
+
+        # CR-04: fail if any unsubstituted shell-style placeholder survives in
+        # the RENDERED config. Catches a missing/empty PANEL_DOMAIN or any
+        # other un-rendered ${...} that would silently break routing.
+        RENDERED=$(docker run --rm \
+            -e PANEL_DOMAIN="$RENDER_DOMAIN" \
+            -e NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx \
+            -e NGINX_ENVSUBST_FILTER=PANEL_DOMAIN \
+            -v "$NGINX_TMPL:/etc/nginx/templates/nginx.conf.template:ro" \
+            --entrypoint sh \
+            nginx:1.27-alpine -c \
+            '/docker-entrypoint.d/20-envsubst-on-templates.sh >/dev/null 2>&1; cat /etc/nginx/nginx.conf' 2>/dev/null || echo "")
+        if printf '%s' "$RENDERED" | grep -q '\${'; then
+            fail "no unsubstituted \${...} placeholders in rendered nginx.conf" \
+                 "rendered config still contains \${...} — check PANEL_DOMAIN / envsubst"
+        else
+            pass "no unsubstituted \${...} placeholders in rendered nginx.conf"
         fi
     else
-        skip "nginx -t (syntax)" "docker not available"
+        skip "nginx -t (rendered template syntax)" "docker not available"
+        skip "no unsubstituted \${...} placeholders" "docker not available"
     fi
 
-    grep -q 'ssl_preread.*on'                   "$NGINX_CONF" && pass "ssl_preread on"               || fail "ssl_preread on"
-    grep -q 'resolver 127\.0\.0\.11.*ipv6=off'  "$NGINX_CONF" && pass "resolver 127.0.0.11 ipv6=off"  || fail "resolver 127.0.0.11 ipv6=off"
-    grep -q 'default.*mtg-default'              "$NGINX_CONF" && pass "default → mtg-default"         || fail "default → mtg-default"
-    grep -q 'acme-challenge'                    "$NGINX_CONF" && pass "ACME challenge path configured" || fail "ACME challenge path missing"
+    grep -q 'ssl_preread.*on'                   "$NGINX_TMPL" && pass "ssl_preread on"               || fail "ssl_preread on"
+    grep -q 'resolver 127\.0\.0\.11.*ipv6=off'  "$NGINX_TMPL" && pass "resolver 127.0.0.11 ipv6=off"  || fail "resolver 127.0.0.11 ipv6=off"
+    grep -q 'default.*mtg-default'              "$NGINX_TMPL" && pass "default → mtg-default"         || fail "default → mtg-default"
+    grep -q 'acme-challenge'                    "$NGINX_TMPL" && pass "ACME challenge path configured" || fail "ACME challenge path missing"
 fi
 
 # ===========================================================================

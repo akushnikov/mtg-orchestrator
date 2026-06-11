@@ -85,29 +85,49 @@ if (-not $HasDocker) {
 Write-Host ""
 Write-Host "[ 2 ] nginx configuration" -ForegroundColor White
 
-$NginxConf = Join-Path $ScriptRoot "infra\nginx\nginx.conf"
-if (-not (Test-Path $NginxConf)) {
-    Write-Check "infra/nginx/nginx.conf exists" $false "File not found: $NginxConf"
+$NginxTmpl = Join-Path $ScriptRoot "infra\nginx\nginx.conf.template"
+if (-not (Test-Path $NginxTmpl)) {
+    Write-Check "infra/nginx/nginx.conf.template exists" $false "File not found: $NginxTmpl"
 } else {
-    Write-Check "infra/nginx/nginx.conf exists" $true
+    Write-Check "infra/nginx/nginx.conf.template exists" $true
 
     if ($HasDocker) {
-        # Validate nginx.conf syntax using the pinned image
+        # The template is rendered by the nginx image entrypoint (envsubst)
+        # into /etc/nginx/nginx.conf at container start. Mount it at
+        # /etc/nginx/templates/ and let the entrypoint render before nginx -t,
+        # so the test exercises the same rendering the running container uses.
         Push-Location $ScriptRoot
         try {
-            $NginxOut = & docker run --rm -v "${ScriptRoot}/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.27-alpine nginx -t 2>&1
-            Write-Check "nginx -t (syntax)" ($LASTEXITCODE -eq 0) $($NginxOut | Out-String)
+            $RenderDomain = if ($env:PANEL_DOMAIN) { $env:PANEL_DOMAIN } else { "panel.example.test" }
+            $TmplMount = "${ScriptRoot}/infra/nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro"
+            $NginxOut = & docker run --rm `
+                -e "PANEL_DOMAIN=$RenderDomain" `
+                -e "NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx" `
+                -e "NGINX_ENVSUBST_FILTER=PANEL_DOMAIN" `
+                -v $TmplMount nginx:1.27-alpine nginx -t 2>&1
+            Write-Check "nginx -t (rendered template syntax)" ($LASTEXITCODE -eq 0) $($NginxOut | Out-String)
+
+            # CR-04: fail if any unsubstituted ${...} placeholder survives in
+            # the RENDERED config (missing/empty PANEL_DOMAIN or other vars).
+            $Rendered = & docker run --rm `
+                -e "PANEL_DOMAIN=$RenderDomain" `
+                -e "NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx" `
+                -e "NGINX_ENVSUBST_FILTER=PANEL_DOMAIN" `
+                -v $TmplMount --entrypoint sh nginx:1.27-alpine `
+                -c '/docker-entrypoint.d/20-envsubst-on-templates.sh >/dev/null 2>&1; cat /etc/nginx/nginx.conf' 2>&1 | Out-String
+            Write-Check "no unsubstituted `${...} placeholders in rendered nginx.conf" (-not ($Rendered -match '\$\{')) "rendered config still contains `${...} — check PANEL_DOMAIN / envsubst"
         } catch {
-            Write-Skip "nginx -t (syntax)" "docker run failed: $_"
+            Write-Skip "nginx -t (rendered template syntax)" "docker run failed: $_"
         } finally {
             Pop-Location
         }
     } else {
-        Write-Skip "nginx -t (syntax)" "docker not available"
+        Write-Skip "nginx -t (rendered template syntax)" "docker not available"
+        Write-Skip "no unsubstituted `${...} placeholders" "docker not available"
     }
 
-    # Check required directives
-    $NginxContent = Get-Content $NginxConf -Raw
+    # Check required directives in the template source
+    $NginxContent = Get-Content $NginxTmpl -Raw
     Write-Check "ssl_preread on" ($NginxContent -match "ssl_preread\s+on")
     Write-Check "resolver 127.0.0.11 valid=10s ipv6=off" ($NginxContent -match "resolver\s+127\.0\.0\.11.*ipv6=off")
     Write-Check "default routes to mtg-default (not backend)" ($NginxContent -match "default\s+mtg-default")
