@@ -1,0 +1,83 @@
+from datetime import datetime
+from typing import AsyncIterator
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db import crud
+from app.db.engine import AsyncSessionLocal
+from app.db.models import ProxyInstance
+from app.services import proxy_service
+
+
+router = APIRouter()
+
+
+class CreateInstanceRequest(BaseModel):
+    domain: str
+
+
+class ProxyInstanceResponse(BaseModel):
+    id: int
+    domain: str
+    slug: str
+    port: int
+    status: str
+    tg_url: str = ""
+    created_at: str
+
+
+async def async_db_session() -> AsyncIterator[AsyncSession]:
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+def _to_response(row: ProxyInstance, tg_url: str = "") -> ProxyInstanceResponse:
+    created_at = row.created_at
+    if isinstance(created_at, datetime):
+        created_at_str = created_at.isoformat()
+    else:
+        created_at_str = str(created_at)
+    return ProxyInstanceResponse(
+        id=row.id,
+        domain=row.domain,
+        slug=row.slug,
+        port=row.port,
+        status=row.status.value if hasattr(row.status, "value") else str(row.status),
+        tg_url=tg_url,
+        created_at=created_at_str,
+    )
+
+
+@router.post(
+    "/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ProxyInstanceResponse,
+)
+async def create_instance(
+    body: CreateInstanceRequest,
+    session: AsyncSession = Depends(async_db_session),
+) -> ProxyInstanceResponse:
+    try:
+        row, tg_url = await proxy_service.create_instance(session, body.domain)
+    except proxy_service.DuplicateDomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A proxy instance for this domain already exists",
+        ) from exc
+    except proxy_service.InvalidDomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Domain validation failed",
+        ) from exc
+
+    return _to_response(row, tg_url=tg_url)
+
+
+@router.get("/", response_model=list[ProxyInstanceResponse])
+async def list_instances(
+    session: AsyncSession = Depends(async_db_session),
+) -> list[ProxyInstanceResponse]:
+    rows = await crud.list_instances(session)
+    return [_to_response(row) for row in rows]

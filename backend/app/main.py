@@ -14,8 +14,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from app.api.v1.router import api_router
+from app.db.engine import engine
+from app.db.models import Base
+from app.services.docker_service import get_proxy_net_name
 
 # Resolve paths relative to this file so the app works regardless of cwd.
 APP_DIR = Path(__file__).parent
@@ -24,8 +28,14 @@ STATIC_DIR = APP_DIR / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    """Application lifespan — reserved for future startup/shutdown hooks."""
-    yield
+    """Initialize persistent registry and discover Docker network context."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    app.state.proxy_net_name = await get_proxy_net_name()
+    try:
+        yield
+    finally:
+        await engine.dispose()
 
 
 app = FastAPI(
@@ -48,6 +58,9 @@ app = FastAPI(
 async def healthz() -> dict[str, str]:
     """Docker / compose healthcheck endpoint. Returns 200 with status ok."""
     return {"status": "ok"}
+
+
+app.include_router(api_router, prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
