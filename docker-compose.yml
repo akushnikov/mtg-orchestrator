@@ -64,7 +64,12 @@ services:
     networks:
       - proxy-net
     depends_on:
+      # Soft dependencies: nginx resolves upstreams at request time via the
+      # embedded resolver, but declaring both upstreams reduces cold-start
+      # connection failures on `docker compose up`. mtg-default is the
+      # catch-all (default) route, so it matters most.
       - backend
+      - mtg-default
     healthcheck:
       test: ["CMD", "nginx", "-t"]
       interval: 30s
