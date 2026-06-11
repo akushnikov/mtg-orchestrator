@@ -31,21 +31,45 @@ done
 
 # ---------------------------------------------------------------------------
 # Load .env (if present) — never print secrets
+#
+# Parse strictly: read only `KEY=VALUE` lines and `export` them WITHOUT
+# executing the file (do NOT `source` it). Sourcing would evaluate any
+# $(...)/backtick/metacharacter in operator-controlled values as shell code
+# during a "read-only" verification. CR (\r) from CRLF .env files is stripped
+# so values like a trailing-\r PANEL_DOMAIN do not corrupt later checks.
 # ---------------------------------------------------------------------------
+load_env() {
+    local env_path="$1"
+    local line key val
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"                       # strip trailing CR (CRLF)
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue # comment
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue # blank
+        # Only accept strict KEY=VALUE where KEY is a valid env name.
+        if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            val="${BASH_REMATCH[2]}"
+            # Strip one layer of surrounding single/double quotes if present.
+            if [[ "$val" =~ ^\"(.*)\"$ ]] || [[ "$val" =~ ^\'(.*)\'$ ]]; then
+                val="${BASH_REMATCH[1]}"
+            fi
+            export "$key=$val"
+        fi
+    done < "$env_path"
+}
+
 ENV_FILE="$REPO_DIR/.env"
 if [[ -f "$ENV_FILE" ]]; then
-    # Use env file without exporting secrets to subshells
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+    load_env "$ENV_FILE"
 elif [[ -f "$REPO_DIR/.env.example" ]]; then
-    echo "WARNING: .env not found; sourcing .env.example for placeholder values"
-    set -a
-    # shellcheck disable=SC1090
-    source "$REPO_DIR/.env.example"
-    set +a
+    echo "WARNING: .env not found; parsing .env.example for placeholder values"
+    load_env "$REPO_DIR/.env.example"
 fi
+
+# DOCKER_HOST in .env points the BACKEND container at the socket-proxy
+# (tcp://docker-socket-proxy:2375). It must NOT redirect this verifier's own
+# `docker` CLI, which talks to the local daemon. Drop it after parsing.
+unset DOCKER_HOST
 
 # ---------------------------------------------------------------------------
 # Counters and helpers
