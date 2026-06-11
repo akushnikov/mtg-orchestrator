@@ -13,7 +13,7 @@
 #   nginx-config  — rendered nginx.conf written by backend (Jinja2); mounted
 #                   into nginx as the active config
 #   certs-volume  — Let's Encrypt certificates; certbot writes, backend reads
-#   acme-webroot  — certbot HTTP-01 challenge files; nginx serves via backend
+#   acme-webroot  — certbot HTTP-01 challenge files; nginx serves directly
 #   mtg-default-data — mtg default instance runtime state
 #   db-data       — SQLite registry (Phase 2+; declared here for volume parity)
 #
@@ -84,7 +84,8 @@ services:
       # Let's Encrypt certs — backend (uvicorn) terminates TLS for the panel.
       # Phase 1: volume exists but certs not yet issued; backend starts on HTTP.
       - certs-volume:/certs:ro
-      # ACME webroot — backend serves challenge files via /.well-known/
+      # ACME webroot — shared volume; nginx serves challenge files directly.
+      # Backend retains access for Phase 2+ cert renewal hooks.
       - acme-webroot:/var/www/certbot
       # SQLite registry (Phase 2+; backend will create db file on first start).
       - db-data:/data/db
@@ -148,18 +149,41 @@ services:
 
   # ---------------------------------------------------------------------------
   # certbot — Let's Encrypt HTTP-01 certificate bootstrap and renewal
-  # Run with: docker compose run --rm certbot certonly --webroot ...
+  #
+  # This service is run on-demand (restart: "no").  Do NOT start it with
+  # `docker compose up` — run it explicitly as a one-shot job:
+  #
+  #   Initial issuance (replace ${PANEL_DOMAIN} and ${LE_EMAIL} with .env values):
+  #     docker compose run --rm certbot certonly \
+  #       --webroot -w /var/www/certbot \
+  #       -d ${PANEL_DOMAIN} \
+  #       --email ${LE_EMAIL} \
+  #       --agree-tos --no-eff-email ${CERTBOT_STAGING}
+  #
+  #   Renewal (run via cron/systemd timer on the VPS):
+  #     docker compose run --rm certbot renew
+  #
+  # Volumes:
+  #   certs-volume  → /etc/letsencrypt  (certbot writes issued certs here)
+  #   acme-webroot  → /var/www/certbot  (certbot writes HTTP-01 challenge tokens;
+  #                                      nginx serves them from the same volume)
   # ---------------------------------------------------------------------------
   certbot:
     image: certbot/certbot
     restart: "no"
+    environment:
+      # Passed through from .env for use in manual certonly command (see above).
+      # Set CERTBOT_STAGING=--staging in .env to test without hitting rate limits.
+      CERTBOT_STAGING: ${CERTBOT_STAGING:-}
     volumes:
+      # Let's Encrypt certificate storage — certbot writes certs; backend reads.
       - certs-volume:/etc/letsencrypt
+      # ACME HTTP-01 webroot — certbot writes challenge files; nginx serves them.
       - acme-webroot:/var/www/certbot
     networks:
       - proxy-net
-    # certbot is run on-demand (not a long-lived service).
-    # See README for the bootstrap command and renewal cron setup.
+    # Default command: display help (safe no-op; never run certonly automatically).
+    # Override at runtime: docker compose run --rm certbot certonly --webroot ...
     entrypoint: ["certbot"]
     command: ["--help"]
     logging:
