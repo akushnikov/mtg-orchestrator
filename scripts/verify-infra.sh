@@ -86,16 +86,22 @@ else
         echo "        Using .env.example for static compose validation"
     fi
 
+    # Capture status INLINE in the `if` condition. The previous pattern
+    # (`COMPOSE_OUT=$(...)` then `COMPOSE_RC=$?` on the next line) read the
+    # exit status of the assignment, not of `docker compose`, so it always
+    # reported success.
     if [[ -n "$ENV_ARG" ]]; then
-        COMPOSE_OUT=$(docker compose --env-file "$ENV_ARG" config --quiet 2>&1)
+        if COMPOSE_OUT=$(docker compose --env-file "$ENV_ARG" config --quiet 2>&1); then
+            pass "docker compose config"
+        else
+            fail "docker compose config" "$COMPOSE_OUT"
+        fi
     else
-        COMPOSE_OUT=$(docker compose config --quiet 2>&1)
-    fi
-    COMPOSE_RC=$?
-    if [[ $COMPOSE_RC -eq 0 ]]; then
-        pass "docker compose config"
-    else
-        fail "docker compose config" "$COMPOSE_OUT"
+        if COMPOSE_OUT=$(docker compose config --quiet 2>&1); then
+            pass "docker compose config"
+        else
+            fail "docker compose config" "$COMPOSE_OUT"
+        fi
     fi
 fi
 
