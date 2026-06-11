@@ -1,0 +1,30 @@
+[project]
+name = "mtg-orchestrator-backend"
+version = "0.1.0"
+description = "MTG Orchestrator backend — FastAPI + aiogram + Docker SDK"
+requires-python = ">=3.12"
+
+# Core dependencies (pinned to versions from STACK.md research)
+dependencies = [
+    "fastapi==0.136.3",
+    "uvicorn[standard]>=0.32.0",
+    "aiogram>=3.26.0",
+    "sqlalchemy==2.0.50",
+    "aiosqlite==0.22.1",
+    "docker==7.1.0",
+    "jinja2>=3.1.4",
+    "pydantic-settings==2.14.1",
+    "httpx>=0.28.1",
+    "python-multipart>=0.0.20",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.fastapi]
+entrypoint = "app.main:app"

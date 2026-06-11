@@ -1,0 +1,239 @@
+# =============================================================================
+# MTG Orchestrator — Docker Compose baseline (Phase 1)
+#
+# Static services: nginx, backend, docker-socket-proxy, certbot, mtg-default.
+#
+# Networks:
+#   proxy-net  (bridge)  — nginx, backend, mtg containers; nginx resolves
+#                          container names via Docker embedded DNS (127.0.0.11)
+#   socket-net (bridge, internal=true) — backend + docker-socket-proxy ONLY;
+#                          no external routing; mtg containers must NOT join it
+#
+# Volumes:
+#   nginx-config  — rendered nginx.conf written by backend (Jinja2); mounted
+#                   into nginx as the active config
+#   certs-volume  — Let's Encrypt certificates; certbot writes, backend reads
+#   acme-webroot  — certbot HTTP-01 challenge files; nginx serves via backend
+#   mtg-default-data — mtg default instance runtime state
+#   db-data       — SQLite registry (Phase 2+; declared here for volume parity)
+#
+# Logging: every service uses json-file driver with max-size/max-file to
+# prevent disk exhaustion on the 30 GB Frankfurt NVMe (Pitfall 11).
+#
+# Security:
+#   - /var/run/docker.sock mounted ONLY into docker-socket-proxy
+#   - backend accesses Docker via DOCKER_HOST=tcp://docker-socket-proxy:2375
+#   - docker-socket-proxy on socket-net (internal); never reachable from nginx
+#     or mtg containers
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # nginx — SNI mux (stream ssl_preread) on :443 and :80
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      # Bootstrap static config (committed). Phase 2+ the backend overwrites
+      # the rendered copy in nginx-config volume; mount order matters:
+      # The named volume entry shadows the bind at the same path. In Phase 2
+      # the backend writes to nginx-config and reloads. For Phase 1 the
+      # bootstrap file is the active config.
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Shared ACME webroot — nginx needs to see the challenge path is proxied
+      # to backend; backend serves /.well-known/acme-challenge/ from here.
+      - acme-webroot:/var/www/certbot:ro
+    networks:
+      - proxy-net
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # backend — FastAPI + Uvicorn (Phase 1: placeholder; Phase 3: full app)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      # Docker SDK connects to socket-proxy over socket-net.
+      DOCKER_HOST: ${DOCKER_HOST:-tcp://docker-socket-proxy:2375}
+      # Panel domain for TLS cert path resolution and webhook URL (Phase 3+).
+      PANEL_DOMAIN: ${PANEL_DOMAIN}
+      # Bot configuration (used Phase 3+; parsed by pydantic-settings).
+      BOT_TOKEN: ${BOT_TOKEN}
+      OWNER_USER_ID: ${OWNER_USER_ID}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    volumes:
+      # Let's Encrypt certs — backend (uvicorn) terminates TLS for the panel.
+      # Phase 1: volume exists but certs not yet issued; backend starts on HTTP.
+      - certs-volume:/certs:ro
+      # ACME webroot — backend serves challenge files via /.well-known/
+      - acme-webroot:/var/www/certbot
+      # SQLite registry (Phase 2+; backend will create db file on first start).
+      - db-data:/data/db
+    networks:
+      - proxy-net
+      - socket-net
+    expose:
+      # Internal only — nginx routes to these ports; not published to host.
+      - "8080"   # plain HTTP (dev / ACME path)
+      - "8443"   # TLS (prod, when certs are issued)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # docker-socket-proxy — restricts Docker API access for the backend
+  # Joins socket-net ONLY. nginx and mtg containers have no route to it.
+  # ---------------------------------------------------------------------------
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.4.2
+    restart: unless-stopped
+    environment:
+      # Allow only the endpoints the backend actually needs.
+      # See STACK.md / PITFALLS.md Pitfall 7 for the reasoning.
+      CONTAINERS: 1   # list, inspect, create, start, stop, remove containers
+      NETWORKS: 1     # needed for attaching dynamic mtg containers to proxy-net
+      POST: 1         # required for write operations (create/start/stop)
+      # Everything else explicitly blocked (defaults to 0, listed for clarity):
+      IMAGES: 0
+      VOLUMES: 0
+      EXEC: 0         # docker exec — NOT needed; nginx reload uses SIGHUP path
+      BUILD: 0
+      SWARM: 0
+      SECRETS: 0
+      AUTH: 0
+      DISTRIBUTION: 0
+      NODES: 0
+      PLUGINS: 0
+      SERVICES: 0
+      SESSION: 0
+      SYSTEM: 0
+      TASKS: 0
+    volumes:
+      # The ONLY service that mounts the Docker socket.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-net   # internal=true; backend reaches it, nginx/mtg cannot
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # certbot — Let's Encrypt HTTP-01 certificate bootstrap and renewal
+  # Run with: docker compose run --rm certbot certonly --webroot ...
+  # ---------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot
+    restart: "no"
+    volumes:
+      - certs-volume:/etc/letsencrypt
+      - acme-webroot:/var/www/certbot
+    networks:
+      - proxy-net
+    # certbot is run on-demand (not a long-lived service).
+    # See README for the bootstrap command and renewal cron setup.
+    entrypoint: ["certbot"]
+    command: ["--help"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # mtg-default — always-on default MTProto fake-TLS proxy (ria.ru masquerade)
+  # This is the catch-all route for unknown/empty SNI on :443.
+  # Clients without a matching domain entry in the nginx map reach this proxy.
+  # ---------------------------------------------------------------------------
+  mtg-default:
+    image: nineseconds/mtg:2
+    restart: unless-stopped
+    environment:
+      # Secret is passed via env for operator convenience (no rebuild needed).
+      # The config.toml references ${MTG_DEFAULT_SECRET} via shell expansion.
+      MTG_DEFAULT_SECRET: ${MTG_DEFAULT_SECRET}
+    volumes:
+      # Read-only config; operator fills MTG_DEFAULT_SECRET in .env.
+      - ./infra/mtg/default.config.toml:/config.toml:ro
+      - mtg-default-data:/data
+    command: ["run", "--config", "/config.toml"]
+    networks:
+      - proxy-net   # nginx reaches this container by name; no socket-net access
+    expose:
+      - "3128"   # MTProto proxy (nginx upstream)
+      - "3129"   # Prometheus metrics (backend scrapes)
+    # NOTE: Do NOT publish these ports to the host — all traffic flows through
+    # nginx SNI mux. Publishing would bypass the SNI mux and expose raw
+    # MTProto directly (Anti-Pattern 2 from ARCHITECTURE.md research).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3129/ | grep -q mtg || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =============================================================================
+# Named volumes
+# =============================================================================
+volumes:
+  nginx-config:
+    # Rendered nginx.conf written by the backend on topology changes (Phase 2+).
+    # Phase 1: not yet used (bootstrap config is bind-mounted from infra/nginx/).
+  certs-volume:
+    # Let's Encrypt certificates written by certbot, read by backend (uvicorn TLS).
+  acme-webroot:
+    # HTTP-01 challenge files served by backend at /.well-known/acme-challenge/.
+  mtg-default-data:
+    # mtg default instance runtime state (blocklist cache, replay cache, etc.).
+  db-data:
+    # SQLite registry for proxy instance records (Phase 2+).
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  proxy-net:
+    # Standard bridge network shared by nginx, backend, and all mtg containers.
+    # Docker embedded DNS (127.0.0.11) resolves container names here — required
+    # for nginx ssl_preread map dynamic upstream resolution.
+    driver: bridge
+
+  socket-net:
+    # Internal bridge — no external routing. Shared ONLY by backend and
+    # docker-socket-proxy. nginx and mtg containers must NOT join this network
+    # to prevent any path to the Docker socket proxy.
+    driver: bridge
+    internal: true
