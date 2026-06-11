@@ -54,9 +54,13 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 
-pass() { echo "  PASS  $1"; (( PASSED++ )); }
-fail() { echo "  FAIL  $1"; [[ -n "${2:-}" ]] && echo "        $2"; (( FAILED++ )); }
-skip() { echo "  SKIP  $1 (${2:-N/A})"; (( SKIPPED++ )); }
+# NOTE: use `VAR=$(( VAR + 1 ))` (assignment, always exit 0), NOT
+# `(( VAR++ ))` — the post-increment evaluates to the OLD value, so when the
+# counter is 0 it returns exit status 1 and, under `set -e`, aborts the
+# script on the first pass/fail/skip.
+pass() { echo "  PASS  $1"; PASSED=$(( PASSED + 1 )); }
+fail() { echo "  FAIL  $1"; [[ -n "${2:-}" ]] && echo "        $2"; FAILED=$(( FAILED + 1 )); }
+skip() { echo "  SKIP  $1 (${2:-N/A})"; SKIPPED=$(( SKIPPED + 1 )); }
 
 check_cmd() {
     command -v "$1" &>/dev/null
@@ -245,10 +249,13 @@ if [[ -f "$COMPOSE_FILE" ]]; then
     [[ "$SOCK_COUNT" -le 2 ]] && pass "docker.sock appears only in socket-proxy section" \
                               || fail "docker.sock appears unexpectedly in multiple places (count=$SOCK_COUNT)"
 
-    # mtg-default must NOT be on socket-net
-    # Extract mtg-default block and check it does NOT contain socket-net
+    # mtg-default must NOT be on socket-net.
+    # Extract the mtg-default block, strip trailing comments (so prose like
+    # "no socket-net access" does not trigger a false positive), and look for
+    # an actual list entry `- socket-net` rather than the bare word.
     if awk '/^  mtg-default:/{f=1} f && /^  [a-z]/ && !/^  mtg-default:/{f=0} f' "$COMPOSE_FILE" \
-        | grep -q 'socket-net'; then
+        | sed 's/#.*$//' \
+        | grep -qE '^\s*-\s*socket-net\b'; then
         fail "mtg-default is on socket-net (must not be)"
     else
         pass "mtg-default is not on socket-net"
