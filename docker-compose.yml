@@ -97,9 +97,11 @@ services:
       # Let's Encrypt certs — backend (uvicorn) terminates TLS for the panel.
       # Phase 1: volume exists but certs not yet issued; backend starts on HTTP.
       - certs-volume:/certs:ro
-      # ACME webroot — shared volume; nginx serves challenge files directly.
-      # Backend retains access for Phase 2+ cert renewal hooks.
-      - acme-webroot:/var/www/certbot
+      # ACME webroot — shared volume. nginx serves /.well-known/acme-challenge/
+      # directly from this volume on :80; the backend is NOT involved in ACME.
+      # Mounted read-only here: the backend has no Phase 1 reason to write it
+      # (Phase 2+ renewal hooks can switch to read-write when actually needed).
+      - acme-webroot:/var/www/certbot:ro
       # SQLite registry (Phase 2+; backend will create db file on first start).
       - db-data:/data/db
     networks:
@@ -271,7 +273,8 @@ volumes:
   certs-volume:
     # Let's Encrypt certificates written by certbot, read by backend (uvicorn TLS).
   acme-webroot:
-    # HTTP-01 challenge files served by backend at /.well-known/acme-challenge/.
+    # HTTP-01 challenge files written by certbot and served by nginx directly
+    # at /.well-known/acme-challenge/ on :80. The backend is not involved.
   mtg-default-data:
     # mtg default instance runtime state (blocklist cache, replay cache, etc.).
   db-data:
