@@ -216,3 +216,58 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# =====================================================================
+# mtg-orchestrator — project-specific
+# =====================================================================
+
+# --- GSD planning artifacts: LOCAL ONLY (confidential, never commit) ---
+.planning/
+
+# --- IDE / editor ---
+.idea/
+.vscode/
+
+# --- Claude Code local settings (per-machine, not shared) ---
+.claude/settings.local.json
+CLAUDE.md
+AGENTS.md
+
+# --- Frontend (Vue3 + Vite + Pinia) ---
+node_modules/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+# Vite build output (frontend); scoped so it doesn't clash with Python dist/
+frontend/dist/
+
+# --- Secrets & environment ---
+# .env / .envrc already ignored above; cover variants but keep the example
+.env.*
+!.env.example
+*.secret
+secrets/
+
+# --- TLS / Let's Encrypt (certs & keys must never leak) ---
+*.pem
+*.key
+*.crt
+*.p12
+letsencrypt/
+certbot/conf/
+certbot/www/
+
+# --- Runtime data & SQLite registry (instances, secrets, status) ---
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Generated at runtime (rendered from Jinja2 templates) ---
+# Keep templates tracked; ignore rendered per-instance output.
+nginx/generated/
+*.generated.conf
