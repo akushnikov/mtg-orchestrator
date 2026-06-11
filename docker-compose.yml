@@ -225,13 +225,18 @@ services:
   mtg-default:
     image: nineseconds/mtg:2
     restart: unless-stopped
-    environment:
-      # Secret loaded from .env — operator extracts from existing VPS mtg setup.
-      # Format: ee + 32 hex chars (16 random bytes) + hex(domain bytes)
-      # Example for ria.ru: ee<key32hex>7269612e7275
-      MTG_DEFAULT_SECRET: ${MTG_DEFAULT_SECRET}
-    # simple-run passes secret on the command line — avoids the TOML env-var
-    # expansion limitation while keeping the real secret out of the config file.
+    # NOTE: mtg "simple-run" takes the secret as a POSITIONAL argument, so the
+    # real secret (interpolated from .env at compose parse time) is visible in
+    # `docker inspect`/`docker compose config`/process args. This is inherent
+    # to simple-run. To avoid duplicating that exposure, the secret is passed
+    # ONLY via the command line below — there is intentionally no redundant
+    # `environment: MTG_DEFAULT_SECRET` block. Phase 2 migrates to
+    # "run --config", where the secret lives only in a non-committed config
+    # file with restricted permissions (single, minimized secret surface).
+    #
+    # Secret format (loaded from .env): ee + 32 hex chars (16 random bytes) +
+    # hex(domain bytes). Example for ria.ru: ee<key32hex>7269612e7275
+    #
     # The bind address must match the nginx upstream (mtg-default:3128).
     command: ["simple-run", "0.0.0.0:3128", "${MTG_DEFAULT_SECRET}"]
     networks:
