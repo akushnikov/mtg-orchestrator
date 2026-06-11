@@ -117,20 +117,29 @@ mask() { sed -E 's/(secret=ee)[0-9a-fA-F]+/\1***MASKED***/g; s/("secret":[[:spac
 api() {
     local method="$1" path="$2" body="${3:-}"
     $COMPOSE exec -T backend python - "$method" "$path" "$body" <<'PYEOF'
-import sys, urllib.request, urllib.error
+import sys, ssl, urllib.request, urllib.error
 method, path = sys.argv[1], sys.argv[2]
 body = sys.argv[3] if len(sys.argv) > 3 else ""
-url = "http://localhost:8080" + path
 data = body.encode() if body else None
 headers = {"Content-Type": "application/json"} if data else {}
-req = urllib.request.Request(url, data=data, method=method, headers=headers)
-try:
-    r = urllib.request.urlopen(req, timeout=60)
-    sys.stdout.write(str(r.status) + "\n"); sys.stdout.write(r.read().decode())
-except urllib.error.HTTPError as e:
-    sys.stdout.write(str(e.code) + "\n"); sys.stdout.write(e.read().decode())
-except Exception as e:
-    sys.stdout.write("000\n"); sys.stdout.write("TRANSPORT ERROR: %r" % e)
+ctx = ssl._create_unverified_context()
+# The backend listens on :8443 (TLS) when the panel cert exists, else :8080.
+# Try TLS first, fall back to HTTP. An HTTP-level error (4xx/5xx) is a real
+# response — return it, don't fall through.
+last = None
+for base in ("https://localhost:8443", "http://localhost:8080"):
+    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    kw = {"timeout": 60}
+    if base.startswith("https"):
+        kw["context"] = ctx
+    try:
+        r = urllib.request.urlopen(req, **kw)
+        sys.stdout.write(str(r.status) + "\n"); sys.stdout.write(r.read().decode()); sys.exit(0)
+    except urllib.error.HTTPError as e:
+        sys.stdout.write(str(e.code) + "\n"); sys.stdout.write(e.read().decode()); sys.exit(0)
+    except Exception as e:
+        last = e; continue
+sys.stdout.write("000\n"); sys.stdout.write("TRANSPORT ERROR: %r" % last)
 PYEOF
 }
 status_of() { printf '%s' "$1" | head -n1; }
@@ -485,6 +494,25 @@ elif [[ -n "${TG:-}" ]]; then
     info "Re-run with --keep to get a live URL:  bash scripts/verify-phase2.sh --domain $TEST_DOMAIN --keep"
 else
     info "No instance created (create failed earlier) — nothing to open."
+fi
+
+# ===========================================================================
+# 16. External panel TLS reachability (G1)
+# ===========================================================================
+hdr 16 "External panel TLS reachability (G1)"
+if [[ -z "${PANEL_DOMAIN:-}" ]]; then
+    skip "panel TLS" "PANEL_DOMAIN not set in env/.env"
+elif ! command -v curl >/dev/null 2>&1; then
+    skip "panel TLS" "curl not installed on host"
+else
+    POUT="$(curl -ksS --max-time 10 "https://${PANEL_DOMAIN}/healthz" 2>&1)"
+    if printf '%s' "$POUT" | grep -q '"status":"ok"'; then
+        pass "https://${PANEL_DOMAIN}/healthz -> ok (nginx SNI passthrough -> backend:8443 TLS)"
+    else
+        fail "https://${PANEL_DOMAIN}/healthz not reachable" "$(printf '%s' "$POUT" | head -n3)"
+        info "Needs LE cert for ${PANEL_DOMAIN} AND Moscow relay forwarding :443."
+        info "Check which port the backend chose:  $COMPOSE logs backend | grep entrypoint"
+    fi
 fi
 
 # ===========================================================================

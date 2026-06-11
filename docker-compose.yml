@@ -120,9 +120,9 @@ services:
       - "8443"   # TLS (prod, when certs are issued)
     healthcheck:
       # python:3.12-slim has no wget/curl — probe via python (stdlib urllib).
-      # nginx depends_on this becoming healthy, so it must reflect real
-      # readiness (the lifespan has run and /healthz responds).
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz').status==200 else 1)"]
+      # healthcheck.py tries :8443 (TLS) then :8080 (HTTP) so it works in either
+      # mode the entrypoint chose. nginx depends_on this becoming healthy.
+      test: ["CMD", "python", "/backend/healthcheck.py"]
       interval: 30s
       timeout: 10s
       retries: 3

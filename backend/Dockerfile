@@ -23,16 +23,13 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .
 
-# Copy application source.
+# Copy application source + entrypoint/healthcheck helpers.
 COPY app/ ./app/
+COPY entrypoint.sh healthcheck.py ./
 
-# Expose the internal HTTP port (plain).
-# In production the compose command overrides this with --port 8443 + TLS flags.
-EXPOSE 8080
+# Internal ports: 8080 (plain HTTP fallback) and 8443 (TLS panel).
+EXPOSE 8080 8443
 
-# Default entrypoint — plain HTTP for local/dev verification.
-# Production docker-compose.yml overrides CMD with TLS cert paths.
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8080", \
-     "--workers", "1"]
+# The entrypoint picks the listener: TLS on :8443 when the panel cert exists,
+# else plain HTTP on :8080. (sh-invoked so no +x bit is needed on Windows.)
+CMD ["sh", "entrypoint.sh"]
