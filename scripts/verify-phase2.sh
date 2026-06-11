@@ -256,7 +256,11 @@ if [[ "$ST" == "201" ]]; then
     fi
 else
     fail "POST create (expected 201)" "status=$ST body=$(printf '%s' "$BODY" | mask)"
-    info "If status=500 here, inspect: $COMPOSE logs --tail=80 backend"
+    if [[ "$ST" == "500" || "$ST" == "000" ]]; then
+        echo "        ---- backend logs (tail 60) ----"
+        $COMPOSE logs --tail=60 backend 2>&1 | mask | sed 's/^/        | /'
+        echo "        --------------------------------"
+    fi
 fi
 
 # ===========================================================================
