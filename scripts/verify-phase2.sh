@@ -272,10 +272,17 @@ fi
 # 5. mtg container created (Test 3a)
 # ===========================================================================
 hdr 5 "mtg container (UAT Test 3)"
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CNAME"; then
-    pass "container $CNAME is running"
+# Check the actual container state, not just presence: a crash-looping mtg
+# (e.g. bad run command) shows as "restarting", which `docker ps | grep` would
+# still match. On any non-running state, dump mtg logs so the cause is visible.
+CSTATE="$(docker inspect -f '{{.State.Status}} restarts={{.RestartCount}}' "$CNAME" 2>/dev/null || echo 'missing')"
+if printf '%s' "$CSTATE" | grep -q '^running'; then
+    pass "container $CNAME is running ($CSTATE)"
 else
-    fail "container $CNAME not running" "docker ps | grep $CNAME"
+    fail "container $CNAME not running ($CSTATE)"
+    echo "        ---- mtg logs (tail 15) ----"
+    docker logs --tail=15 "$CNAME" 2>&1 | sed 's/^/        | /'
+    echo "        ----------------------------"
 fi
 
 # ===========================================================================
