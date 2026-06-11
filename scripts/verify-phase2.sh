@@ -136,6 +136,17 @@ PYEOF
 status_of() { printf '%s' "$1" | head -n1; }
 body_of()   { printf '%s' "$1" | tail -n +2; }
 
+# Poll the backend until /healthz returns 200 (uvicorn needs a moment to bind
+# after a recreate/restart). Returns 1 after ~30s.
+wait_backend() {
+    local i
+    for i in $(seq 1 30); do
+        [[ "$(status_of "$(api GET /healthz)")" == "200" ]] && return 0
+        sleep 1
+    done
+    return 1
+}
+
 # JSON field extractor (host python3); usage: jget '<json>' 'expr using d'
 jget() { python3 -c 'import sys,json; d=json.loads(sys.stdin.read() or "null"); print(eval(sys.argv[1]))' "$2" <<<"$1" 2>/dev/null; }
 
@@ -177,6 +188,16 @@ if $DO_BUILD; then
     info "HEAD: $(git rev-parse --short HEAD 2>/dev/null)"
     $COMPOSE build backend && pass "docker compose build backend" || fail "docker compose build backend"
     $COMPOSE up -d backend && pass "docker compose up -d backend" || fail "docker compose up -d backend"
+fi
+
+# ===========================================================================
+# 0b. Wait for backend to accept connections (covers recreate race)
+# ===========================================================================
+hdr 0b "Backend readiness"
+if wait_backend; then
+    pass "backend listening on :8080"
+else
+    fail "backend not ready after 30s" "$COMPOSE logs --tail=80 backend"
 fi
 
 # ===========================================================================
@@ -368,10 +389,7 @@ fi
 hdr 12 "Restart persistence (UAT Test 9)"
 if confirm "Restart backend to test persistence?"; then
     $COMPOSE restart backend >/dev/null 2>&1
-    sleep 3
-    for i in 1 2 3 4 5; do
-        [[ "$(status_of "$(api GET /healthz)")" == "200" ]] && break; sleep 2
-    done
+    wait_backend || info "backend slow to come back"
     if printf '%s' "$(body_of "$(api GET /api/v1/instances/)")" | grep -q "$TEST_DOMAIN"; then
         pass "instance survives backend restart"
     else
@@ -388,10 +406,7 @@ hdr 13 "Startup reconciliation (UAT Test 10)"
 if confirm "Kill $CNAME outside the app and restart backend to test reconcile?"; then
     docker rm -f "$CNAME" >/dev/null 2>&1
     $COMPOSE restart backend >/dev/null 2>&1
-    sleep 3
-    for i in 1 2 3 4 5; do
-        [[ "$(status_of "$(api GET /healthz)")" == "200" ]] && break; sleep 2
-    done
+    wait_backend || info "backend slow to come back"
     BODY="$(body_of "$(api GET /api/v1/instances/)")"
     ST_FIELD="$(jget "$BODY" "[r.get('status') for r in (d or []) if r.get('domain')=='$TEST_DOMAIN']")"
     if printf '%s' "$ST_FIELD" | grep -q 'error'; then
