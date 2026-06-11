@@ -1,42 +1,67 @@
 # =============================================================================
 # mtg default instance — Phase 1 bootstrap configuration
 #
-# Operator: replace the placeholder values below with real parameters
-# extracted from the existing working mtg setup on the VPS.
+# OPERATOR INSTRUCTIONS
+# =====================
+# This file uses the correct mtg v2 TOML syntax (flat top-level keys, not
+# nested sections). Do NOT commit real secrets — the compose service uses
+# "simple-run" in Phase 1 so the secret is passed via MTG_DEFAULT_SECRET
+# from .env (see docker-compose.yml, mtg-default service command).
 #
-# The secret must be in hex format: ee + 32 hex chars (16 random bytes) +
-# hex(domain bytes). Example for ria.ru: ee<key32hex>72696100
+# This file configures everything EXCEPT the secret for Phase 1.
+# In Phase 2, the backend will render per-instance configs with real secrets.
+#
+# Secret format: ee + 32 hex chars (16 random bytes) + hex(domain bytes).
+# Example for ria.ru: ee<key32hex>7269612e7275
+# To generate: mtg generate-secret --hex ria.ru
 #
 # References:
 #   https://github.com/9seconds/mtg/blob/master/example.config.toml
+#   https://github.com/9seconds/mtg
 # =============================================================================
 
-[secret]
-# Full hex secret including ee prefix.
-# Set via MTG_DEFAULT_SECRET env var at compose run time; this is the fallback.
-# Production: override with the value from .env / docker-compose environment.
-value = "${MTG_DEFAULT_SECRET}"
+# ---------------------------------------------------------------------------
+# NOTE: In Phase 1 the compose mtg-default service uses "simple-run" which
+# takes <bind-to> and <secret> as positional CLI arguments (not a config
+# file). This file documents the full config shape for Phase 2+ where the
+# backend generates per-instance config files with real secrets.
+#
+# "simple-run" syntax (used in docker-compose.yml):
+#   mtg simple-run 0.0.0.0:3128 <secret>
+#
+# "run" syntax (Phase 2+ with full config file):
+#   mtg run /path/to/config.toml
+# ---------------------------------------------------------------------------
 
-[bind]
-to = "0.0.0.0:3128"
+# Proxy secret — full hex string including "ee" prefix.
+# Phase 2+: fill with the real operator-extracted secret from .env.
+# DO NOT commit the real secret here. See .env.example for placeholder.
+# secret = "ee<32-hex-key><hex-of-domain>"
+
+# Bind address for MTProto clients (nginx upstream target).
+bind-to = "0.0.0.0:3128"
+
+# =============================================================================
+# Prometheus metrics — scraped by backend (Phase 4 observability)
+# Bind to 0.0.0.0 so the backend container can reach port 3129 over proxy-net.
+# =============================================================================
 
 [stats.prometheus]
 enabled = true
-# Bind to 0.0.0.0 so the backend can scrape from inside the proxy-net.
+# 0.0.0.0 required: 127.0.0.1 (default) is unreachable from other containers.
 bind-to = "0.0.0.0:3129"
 http-path = "/"
 metric-prefix = "mtg"
 
 # =============================================================================
-# IMPORTANT: Disable or narrow the default firehol_level1 blocklist.
+# IMPORTANT: Disable the default firehol_level1 blocklist.
 # firehol_level1 includes RFC1918 ranges (10.0.0.0/8, 172.16.0.0/12,
-# 192.168.0.0/16) which are used by Docker bridge networks. If left enabled,
-# Docker-internal health-checks and backend metrics scrapes will be blocked.
-# See PITFALLS.md Pitfall 6 for the full explanation.
+# 192.168.0.0/16) used by Docker bridge networks. If left enabled:
+#   - Health-check connections from the backend are blocked.
+#   - The DNAT cascade from Moscow may appear as an RFC1918 source.
+# See .planning/research/PITFALLS.md Pitfall 6 for details.
 # =============================================================================
 
 [network]
-# Disable the default blocklist that would block RFC1918 / Docker bridge IPs.
-# Using a less aggressive blocklist allows Docker-internal traffic.
-# For production: set to "firehol_abusers_1d" or leave empty to disable.
+# Empty array disables the blocklist entirely for Docker-internal deployments.
 blocked-subnets = []

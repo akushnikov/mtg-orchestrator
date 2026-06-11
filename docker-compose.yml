@@ -196,33 +196,47 @@ services:
   # mtg-default — always-on default MTProto fake-TLS proxy (ria.ru masquerade)
   # This is the catch-all route for unknown/empty SNI on :443.
   # Clients without a matching domain entry in the nginx map reach this proxy.
+  #
+  # Phase 1: uses "simple-run" to accept the secret from MTG_DEFAULT_SECRET
+  # env var (populated from .env). mtg v2 does NOT expand shell variables
+  # inside TOML config files (scratch-based image, no shell interpolation),
+  # so the secret must be passed as a positional CLI argument.
+  #
+  # Phase 2+: the backend generates per-instance config files with real
+  # secrets; the compose command for those containers uses "run --config".
+  #
+  # "simple-run" signature: mtg simple-run <bind-to> <secret>
+  # Prometheus metrics are not available via simple-run; use "run --config"
+  # with infra/mtg/default.config.toml in Phase 2+ to enable stats.
   # ---------------------------------------------------------------------------
   mtg-default:
     image: nineseconds/mtg:2
     restart: unless-stopped
     environment:
-      # Secret is passed via env for operator convenience (no rebuild needed).
-      # The config.toml references ${MTG_DEFAULT_SECRET} via shell expansion.
+      # Secret loaded from .env — operator extracts from existing VPS mtg setup.
+      # Format: ee + 32 hex chars (16 random bytes) + hex(domain bytes)
+      # Example for ria.ru: ee<key32hex>7269612e7275
       MTG_DEFAULT_SECRET: ${MTG_DEFAULT_SECRET}
-    volumes:
-      # Read-only config; operator fills MTG_DEFAULT_SECRET in .env.
-      - ./infra/mtg/default.config.toml:/config.toml:ro
-      - mtg-default-data:/data
-    command: ["run", "--config", "/config.toml"]
+    # simple-run passes secret on the command line — avoids the TOML env-var
+    # expansion limitation while keeping the real secret out of the config file.
+    # The bind address must match the nginx upstream (mtg-default:3128).
+    command: ["simple-run", "0.0.0.0:3128", "${MTG_DEFAULT_SECRET}"]
     networks:
       - proxy-net   # nginx reaches this container by name; no socket-net access
     expose:
       - "3128"   # MTProto proxy (nginx upstream)
-      - "3129"   # Prometheus metrics (backend scrapes)
     # NOTE: Do NOT publish these ports to the host — all traffic flows through
     # nginx SNI mux. Publishing would bypass the SNI mux and expose raw
     # MTProto directly (Anti-Pattern 2 from ARCHITECTURE.md research).
+    #
+    # Prometheus metrics (port 3129) are NOT exposed in Phase 1 (simple-run
+    # does not support --stats flags). Phase 2 switches to "run --config" with
+    # infra/mtg/default.config.toml to enable metrics.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3129/ | grep -q mtg || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
+      # mtg:2 is a scratch image (no shell, no wget/curl). Disable the
+      # healthcheck for Phase 1; Phase 2 switches to "run --config" which
+      # enables the Prometheus endpoint for a proper HTTP health probe.
+      disable: true
     logging:
       driver: json-file
       options:
