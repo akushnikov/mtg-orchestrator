@@ -17,9 +17,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
-from app.db.engine import engine
+from app.db.engine import AsyncSessionLocal, engine
 from app.db.models import Base
 from app.services.docker_service import get_proxy_net_name
+from app.services.proxy_service import reconcile_on_startup
 
 # Resolve paths relative to this file so the app works regardless of cwd.
 APP_DIR = Path(__file__).parent
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     app.state.proxy_net_name = await get_proxy_net_name()
+    async with AsyncSessionLocal() as session:
+        await reconcile_on_startup(session, app.state.proxy_net_name)
     try:
         yield
     finally:

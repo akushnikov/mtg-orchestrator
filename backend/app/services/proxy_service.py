@@ -1,9 +1,11 @@
+import asyncio
 from pathlib import Path
 import re
 import secrets
 from types import SimpleNamespace
 
 import docker.errors
+import docker
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,6 +87,19 @@ def _remove_toml(slug: str) -> None:
         path.unlink()
 
 
+def _container_exists_sync(slug: str) -> bool:
+    client = docker.DockerClient(base_url=settings.docker_host)
+    try:
+        client.containers.get(f"mtg-{slug}")
+        return True
+    except docker.errors.NotFound:
+        return False
+
+
+async def _container_exists(slug: str) -> bool:
+    return await asyncio.to_thread(_container_exists_sync, slug)
+
+
 async def _active_contexts(session: AsyncSession, include: ProxyInstance | None = None):
     rows = await crud.list_instances(session)
     contexts = [
@@ -126,6 +141,15 @@ async def _get_required_instance(
     if row is None:
         raise InstanceNotFoundError("Instance not found")
     return row
+
+
+async def reconcile_on_startup(session: AsyncSession, proxy_net_name: str) -> None:  # noqa: ARG001
+    rows = await crud.list_instances(session)
+    for row in rows:
+        if row.status != ProxyStatus.running:
+            continue
+        if not await _container_exists(row.slug):
+            await crud.update_instance_status(session, row.id, ProxyStatus.error)
 
 
 async def create_instance(

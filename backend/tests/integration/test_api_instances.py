@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.v1 import instances
+from app.db import crud
 from app.db.models import Base
 from app.main import app
 from app.services import docker_service, domain_validator, nginx_service, proxy_service
@@ -147,3 +148,23 @@ async def test_stop_already_stopped(client):
     stopped_again = await client.patch(f"/api/v1/instances/{instance_id}/stop")
 
     assert stopped_again.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reconcile_on_startup_marks_missing_container_error(client, monkeypatch):
+    async with instances.AsyncSessionLocal() as session:
+        row = await crud.create_instance_row(
+            session,
+            domain="ria.ru",
+            slug="ria_ru",
+            secret="secret-one",
+            port=20000,
+            status=proxy_service.ProxyStatus.running,
+        )
+
+    monkeypatch.setattr(proxy_service, "_container_exists", AsyncMock(return_value=False))
+
+    async with instances.AsyncSessionLocal() as session:
+        await proxy_service.reconcile_on_startup(session, "test_proxy-net")
+        updated = await crud.get_instance(session, row.id)
+        assert updated.status == proxy_service.ProxyStatus.error
