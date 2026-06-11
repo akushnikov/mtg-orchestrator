@@ -29,6 +29,8 @@ async def client(monkeypatch, tmp_path):
         "create_mtg_container",
         AsyncMock(return_value=("container-1", None)),
     )
+    monkeypatch.setattr(docker_service, "start_container", AsyncMock(return_value=None))
+    monkeypatch.setattr(docker_service, "stop_container", AsyncMock(return_value=None))
     monkeypatch.setattr(docker_service, "remove_container", AsyncMock(return_value=None))
     monkeypatch.setattr(nginx_service, "render_and_reload", AsyncMock(return_value=None))
     monkeypatch.setattr(nginx_service, "backup_nginx_config", lambda: "")
@@ -83,3 +85,65 @@ async def test_create_invalid_domain_tls(client, monkeypatch):
     response = await client.post("/api/v1/instances/", json={"domain": "ria.ru"})
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_delete_instance(client):
+    created = await client.post("/api/v1/instances/", json={"domain": "ria.ru"})
+    assert created.status_code == 201
+    instance_id = created.json()["id"]
+
+    deleted = await client.delete(f"/api/v1/instances/{instance_id}")
+    assert deleted.status_code == 204
+
+    listed = await client.get("/api/v1/instances/")
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent(client):
+    response = await client.delete("/api/v1/instances/9999")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_stop_instance(client):
+    created = await client.post("/api/v1/instances/", json={"domain": "ria.ru"})
+    assert created.status_code == 201
+    instance_id = created.json()["id"]
+
+    stopped = await client.patch(f"/api/v1/instances/{instance_id}/stop")
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "stopped"
+
+    listed = await client.get("/api/v1/instances/")
+    assert listed.status_code == 200
+    assert listed.json()[0]["status"] == "stopped"
+    assert listed.json()[0]["tg_url"] == ""
+
+
+@pytest.mark.asyncio
+async def test_start_instance(client):
+    created = await client.post("/api/v1/instances/", json={"domain": "ria.ru"})
+    assert created.status_code == 201
+    instance_id = created.json()["id"]
+    assert (await client.patch(f"/api/v1/instances/{instance_id}/stop")).status_code == 200
+
+    started = await client.patch(f"/api/v1/instances/{instance_id}/start")
+
+    assert started.status_code == 200
+    assert started.json()["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_stop_already_stopped(client):
+    created = await client.post("/api/v1/instances/", json={"domain": "ria.ru"})
+    assert created.status_code == 201
+    instance_id = created.json()["id"]
+    assert (await client.patch(f"/api/v1/instances/{instance_id}/stop")).status_code == 200
+
+    stopped_again = await client.patch(f"/api/v1/instances/{instance_id}/stop")
+
+    assert stopped_again.status_code == 409

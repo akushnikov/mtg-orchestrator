@@ -72,6 +72,14 @@ async def stop_container(name: str) -> None:
     await asyncio.to_thread(_stop_container, name)
 
 
+def _start_container(name: str) -> None:
+    _client().containers.get(name).start()
+
+
+async def start_container(name: str) -> None:
+    await asyncio.to_thread(_start_container, name)
+
+
 def _remove_container(name: str) -> None:
     _client().containers.get(name).remove(force=True)
 

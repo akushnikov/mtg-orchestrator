@@ -3,6 +3,7 @@ import re
 import secrets
 from types import SimpleNamespace
 
+import docker.errors
 from jinja2 import Environment, FileSystemLoader
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,18 @@ class DuplicateDomainError(ValueError):
 
 
 class InvalidDomainError(ValueError):
+    pass
+
+
+class InstanceNotFoundError(ValueError):
+    pass
+
+
+class InstanceStateError(ValueError):
+    pass
+
+
+class LifecycleOperationError(RuntimeError):
     pass
 
 
@@ -82,6 +95,37 @@ async def _active_contexts(session: AsyncSession, include: ProxyInstance | None 
     if include is not None and include.status != ProxyStatus.running:
         contexts.append(build_nginx_instance_context(include))
     return contexts
+
+
+async def _running_contexts_excluding(
+    session: AsyncSession,
+    instance_id: int,
+) -> list[SimpleNamespace]:
+    rows = await crud.list_instances(session)
+    return [
+        build_nginx_instance_context(row)
+        for row in rows
+        if row.status == ProxyStatus.running and row.id != instance_id
+    ]
+
+
+async def _running_contexts_including(
+    session: AsyncSession,
+    instance: ProxyInstance,
+) -> list[SimpleNamespace]:
+    contexts = await _running_contexts_excluding(session, instance.id)
+    contexts.append(build_nginx_instance_context(instance))
+    return contexts
+
+
+async def _get_required_instance(
+    session: AsyncSession,
+    instance_id: int,
+) -> ProxyInstance:
+    row = await crud.get_instance(session, instance_id)
+    if row is None:
+        raise InstanceNotFoundError("Instance not found")
+    return row
 
 
 async def create_instance(
@@ -151,3 +195,62 @@ async def create_instance(
             pass
         nginx_service.restore_nginx_config(nginx_backup)
         raise
+
+
+async def delete_instance(session: AsyncSession, instance_id: int) -> None:
+    row = await _get_required_instance(session, instance_id)
+    active_contexts = await _running_contexts_excluding(session, row.id)
+    await nginx_service.render_and_reload(settings.panel_domain, active_contexts)
+
+    container_name = f"mtg-{row.slug}"
+    try:
+        await docker_service.stop_container(container_name)
+    except docker.errors.NotFound:
+        pass
+
+    try:
+        await docker_service.remove_container(container_name)
+    except docker.errors.NotFound:
+        pass
+    except Exception as exc:
+        await crud.update_instance_status(session, row.id, ProxyStatus.error)
+        raise LifecycleOperationError("Container removal failed after route removal") from exc
+
+    await crud.delete_instance_row(session, row.id)
+    _remove_toml(row.slug)
+
+
+async def stop_instance(session: AsyncSession, instance_id: int) -> ProxyInstance:
+    row = await _get_required_instance(session, instance_id)
+    if row.status == ProxyStatus.stopped:
+        raise InstanceStateError("Instance already stopped")
+
+    active_contexts = await _running_contexts_excluding(session, row.id)
+    await nginx_service.render_and_reload(settings.panel_domain, active_contexts)
+
+    try:
+        await docker_service.stop_container(f"mtg-{row.slug}")
+    except docker.errors.NotFound:
+        pass
+
+    return await crud.update_instance_status(session, row.id, ProxyStatus.stopped)
+
+
+async def start_instance(session: AsyncSession, instance_id: int) -> ProxyInstance:
+    row = await _get_required_instance(session, instance_id)
+    if row.status == ProxyStatus.running:
+        raise InstanceStateError("Instance already running")
+
+    try:
+        await docker_service.start_container(f"mtg-{row.slug}")
+        active_contexts = await _running_contexts_including(session, row)
+        await nginx_service.render_and_reload(settings.panel_domain, active_contexts)
+    except Exception as exc:
+        try:
+            await docker_service.stop_container(f"mtg-{row.slug}")
+        except Exception:
+            pass
+        await crud.update_instance_status(session, row.id, ProxyStatus.error)
+        raise LifecycleOperationError("Instance restart failed") from exc
+
+    return await crud.update_instance_status(session, row.id, ProxyStatus.running)

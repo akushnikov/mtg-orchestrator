@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,3 +81,68 @@ async def list_instances(
 ) -> list[ProxyInstanceResponse]:
     rows = await crud.list_instances(session)
     return [_to_response(row) for row in rows]
+
+
+@router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_instance(
+    instance_id: int,
+    session: AsyncSession = Depends(async_db_session),
+) -> Response:
+    try:
+        await proxy_service.delete_instance(session, instance_id)
+    except proxy_service.InstanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        ) from exc
+    except proxy_service.LifecycleOperationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Instance lifecycle operation failed",
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/{instance_id}/stop", response_model=ProxyInstanceResponse)
+async def stop_instance(
+    instance_id: int,
+    session: AsyncSession = Depends(async_db_session),
+) -> ProxyInstanceResponse:
+    try:
+        row = await proxy_service.stop_instance(session, instance_id)
+    except proxy_service.InstanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        ) from exc
+    except proxy_service.InstanceStateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Instance is already stopped",
+        ) from exc
+    return _to_response(row)
+
+
+@router.patch("/{instance_id}/start", response_model=ProxyInstanceResponse)
+async def start_instance(
+    instance_id: int,
+    session: AsyncSession = Depends(async_db_session),
+) -> ProxyInstanceResponse:
+    try:
+        row = await proxy_service.start_instance(session, instance_id)
+    except proxy_service.InstanceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Instance not found",
+        ) from exc
+    except proxy_service.InstanceStateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Instance is already running",
+        ) from exc
+    except proxy_service.LifecycleOperationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Instance lifecycle operation failed",
+        ) from exc
+    return _to_response(row)
