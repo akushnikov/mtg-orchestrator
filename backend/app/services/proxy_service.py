@@ -150,6 +150,7 @@ async def create_instance(
     secret = generate_mtg_secret(domain)
     row: ProxyInstance | None = None
     container_name = f"mtg-{slug}"
+    container_created = False
     nginx_backup = nginx_service.backup_nginx_config()
 
     try:
@@ -168,6 +169,7 @@ async def create_instance(
             slug,
             proxy_net_name,
         )
+        container_created = True
 
         active_contexts = await _active_contexts(session, include=row)
         for context in active_contexts:
@@ -189,10 +191,15 @@ async def create_instance(
         if row is not None:
             await crud.delete_instance_row(session, row.id)
         _remove_toml(slug)
-        try:
-            await docker_service.remove_container(container_name)
-        except Exception:
-            pass
+        if container_created:
+            try:
+                await docker_service.stop_container(container_name)
+            except Exception:
+                pass
+            try:
+                await docker_service.remove_container(container_name)
+            except Exception:
+                pass
         nginx_service.restore_nginx_config(nginx_backup)
         raise
 
