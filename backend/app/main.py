@@ -44,8 +44,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await write_startup_nginx_config(session)
     if settings.bot_token:
         bot_handlers.bot = aiogram.Bot(token=settings.bot_token)
+        # Derive the webhook path from the actual route so registration can
+        # never drift from what FastAPI serves (the route lives under the
+        # /api/v1 prefix as /api/v1/bot/webhook).
+        webhook_path = app.url_path_for("telegram_webhook")
         await bot_handlers.bot.set_webhook(
-            url=f"https://{settings.panel_domain}/bot/webhook",
+            url=f"https://{settings.panel_domain}{webhook_path}",
             secret_token=settings.webhook_secret,
             allowed_updates=["message"],
             drop_pending_updates=True,

@@ -130,3 +130,16 @@ async def test_webhook_correct_secret_dispatches(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     dispatch.assert_awaited_once()
+
+
+def test_webhook_registration_path_matches_served_route():
+    """Lifespan registers set_webhook at app.url_path_for('telegram_webhook').
+
+    Guards the prod-dead-bot regression: if the served route path and the
+    registered webhook path ever drift, Telegram would POST to a path the
+    backend does not route and /start + /proxies would silently never fire.
+    """
+    _require_bot_handlers()
+    # The path main.py uses to build the set_webhook URL must equal the path
+    # the webhook handler is actually served at (under the /api/v1 prefix).
+    assert app.url_path_for("telegram_webhook") == "/api/v1/bot/webhook"

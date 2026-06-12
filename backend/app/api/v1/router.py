@@ -10,7 +10,7 @@ api_router = APIRouter()
 api_router.include_router(instances.router, prefix="/instances", tags=["instances"])
 
 
-@api_router.post("/bot/webhook", include_in_schema=False)
+@api_router.post("/bot/webhook", include_in_schema=False, name="telegram_webhook")
 async def telegram_webhook(request: Request) -> dict[str, bool]:
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not secret or secret != settings.webhook_secret:
