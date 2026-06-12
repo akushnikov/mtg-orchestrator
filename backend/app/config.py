@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     bot_token: str = ""
     owner_user_id: int = 0
     webhook_secret: str = ""
+    dev_mock_init_data: bool = False
+    mtg_default_domain: str = ""
+    mtg_default_secret: str = ""
     db_path: str = "/data/db/registry.db"
     mtg_configs_dir: str = "/data/mtg-configs"
     nginx_config_dir: str = "/data/nginx"
