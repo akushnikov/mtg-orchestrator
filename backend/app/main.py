@@ -77,12 +77,19 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         # never drift from what FastAPI serves (the route lives under the
         # /api/v1 prefix as /api/v1/bot/webhook).
         webhook_path = app.url_path_for("telegram_webhook")
+        # Telegram's servers are abroad and must reach the backend directly.
+        # panel_domain points at the Moscow relay (so the RU owner can open the
+        # Mini App); routing webhook delivery through that cascade times out.
+        # webhook_domain lets us register a Frankfurt-direct host instead.
+        webhook_host = settings.webhook_domain or settings.panel_domain
+        webhook_url = f"https://{webhook_host}{webhook_path}"
         await bot_handlers.bot.set_webhook(
-            url=f"https://{settings.panel_domain}{webhook_path}",
+            url=webhook_url,
             secret_token=settings.webhook_secret,
             allowed_updates=["message"],
             drop_pending_updates=True,
         )
+        logger.info("Telegram webhook registered at %s", webhook_url)
     try:
         yield
     finally:
