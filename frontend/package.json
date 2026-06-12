@@ -1,0 +1,25 @@
+{
+  "name": "mtg-orchestrator-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@telegram-apps/sdk": "3.11.8",
+    "pinia": "^2.3.0",
+    "vant": "4.9.24",
+    "vue": "^3.5.0",
+    "vue-router": "^4.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/tsconfig": "^0.5.0",
+    "typescript": "^5.0.0",
+    "vite": "^6.0.0",
+    "vue-tsc": "^2.0.0"
+  }
+}
