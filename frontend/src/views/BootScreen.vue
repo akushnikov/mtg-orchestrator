@@ -16,13 +16,15 @@ function isAuthDateStale(): boolean {
 }
 
 onMounted(async () => {
-  if (!auth.initialize()) {
+  // DEBUG (build-time): skip the decoy/reopen redirects so the screens render in
+  // a plain browser. API calls will still 403 without real initData.
+  if (!auth.initialize() && !__DISABLE_DECOY__) {
     await router.replace({ name: 'decoy' });
     return;
   }
 
   const responses = await proxy.fetchAll();
-  if (responses.some((response) => response.status === 403)) {
+  if (!__DISABLE_DECOY__ && responses.some((response) => response.status === 403)) {
     await router.replace({ name: isAuthDateStale() ? 'reopen' : 'decoy' });
     return;
   }

@@ -59,6 +59,12 @@ const router = createRouter({
 });
 
 router.beforeEach((to) => {
+  // DEBUG (build-time): VITE_DISABLE_DECOY=true bypasses the maskirovka guard so
+  // the Mini App is viewable in a plain browser. Off by default and dead-code-
+  // eliminated in normal production builds.
+  if (__DISABLE_DECOY__) {
+    return true;
+  }
   if (['decoy', 'reopen', 'boot'].includes(String(to.name))) {
     return true;
   }

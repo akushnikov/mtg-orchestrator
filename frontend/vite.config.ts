@@ -23,6 +23,10 @@ export default defineConfig(({ mode }) => {
       // DEV ONLY: set VITE_DEV_MOCK_INIT_DATA=true in .env.local for local dev without Telegram.
       // NEVER set in docker-compose.yml build args.
       __DEV_MOCK_INIT_DATA__: JSON.stringify(env.VITE_DEV_MOCK_INIT_DATA === 'true'),
+      // DEBUG ONLY: build with VITE_DISABLE_DECOY=true to bypass the decoy/maskirovka
+      // redirect and inspect the Mini App in a plain browser. Defaults false →
+      // a normal production build keeps the decoy guard (bypass is dead-code-eliminated).
+      __DISABLE_DECOY__: JSON.stringify(env.VITE_DISABLE_DECOY === 'true'),
     },
   };
 });

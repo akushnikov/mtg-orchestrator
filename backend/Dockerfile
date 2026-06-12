@@ -13,6 +13,12 @@ FROM node:22-alpine AS frontend-builder
 
 WORKDIR /frontend
 
+# DEBUG-only: `docker compose build --build-arg VITE_DISABLE_DECOY=true backend`
+# produces an image whose Mini App skips the decoy redirect (viewable in a plain
+# browser). Default empty → normal build keeps maskirovka.
+ARG VITE_DISABLE_DECOY=""
+ENV VITE_DISABLE_DECOY=$VITE_DISABLE_DECOY
+
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
