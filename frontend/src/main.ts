@@ -1,4 +1,8 @@
-import 'vant/lib/index.css';
+// Styles for the function-call APIs (showDialog/showConfirmDialog -> Dialog,
+// showSuccessToast/showFailToast -> Toast). Declarative <van-*> component styles
+// are auto-imported per-component by the VantResolver (see vite.config.ts).
+import 'vant/es/dialog/style';
+import 'vant/es/toast/style';
 
 import { mockTelegramEnv } from '@telegram-apps/sdk';
 import { createPinia } from 'pinia';

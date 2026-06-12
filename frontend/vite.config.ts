@@ -1,13 +1,25 @@
 import { fileURLToPath, URL } from 'node:url';
 
+import { VantResolver } from '@vant/auto-import-resolver';
 import vue from '@vitejs/plugin-vue';
+import Components from 'unplugin-vue-components/vite';
 import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      // On-demand Vant: auto-imports the <van-*> components used in templates
+      // plus their per-component styles, so only what's used is bundled (no full
+      // vant/lib/index.css). Function APIs (showToast/showDialog) stay as explicit
+      // imports; their styles are pulled in main.ts.
+      Components({
+        resolvers: [VantResolver()],
+        dts: 'src/components.d.ts',
+      }),
+    ],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
