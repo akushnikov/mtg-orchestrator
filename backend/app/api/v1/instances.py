@@ -1,11 +1,13 @@
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth import OwnerUserID
+from app.config import settings
 from app.db import crud
 from app.db.engine import AsyncSessionLocal
 from app.db.models import ProxyInstance
@@ -27,6 +29,24 @@ class ProxyInstanceResponse(BaseModel):
     status: str
     tg_url: str = ""
     created_at: str
+
+
+class DefaultProxyResponse(BaseModel):
+    id: int
+    domain: str
+    tg_url: str
+    read_only: bool
+
+
+class CreateStreamRequest(BaseModel):
+    domain: str
+
+
+class ProgressEvent(BaseModel):
+    stage: str
+    status: str
+    detail: str = ""
+    tg_url: str = ""
 
 
 async def async_db_session() -> AsyncIterator[AsyncSession]:
@@ -126,6 +146,80 @@ async def stop_instance(
             detail="Instance is already stopped",
         ) from exc
     return _to_response(row)
+
+
+@router.get("/default", response_model=DefaultProxyResponse)
+async def get_default_proxy(_user_id: OwnerUserID) -> DefaultProxyResponse:
+    tg_url = ""
+    if settings.mtg_default_secret and settings.mtg_default_secret.startswith("ee"):
+        tg_url = proxy_service.build_tg_proxy_url(
+            settings.moscow_ip,
+            settings.mtg_default_secret,
+        )
+    return DefaultProxyResponse(
+        id=-1,
+        domain=settings.mtg_default_domain,
+        tg_url=tg_url,
+        read_only=True,
+    )
+
+
+@router.post("/create/stream", response_class=EventSourceResponse)
+async def create_instance_stream(
+    body: CreateStreamRequest,
+    _user_id: OwnerUserID,
+    session: AsyncSession = Depends(async_db_session),
+) -> AsyncIterator[ServerSentEvent]:
+    yield ServerSentEvent(
+        data=ProgressEvent(stage="validating", status="in_progress").model_dump(),
+        event="progress",
+    )
+    try:
+        _row, tg_url = await proxy_service.create_instance(session, body.domain)
+    except proxy_service.InvalidDomainError as exc:
+        yield ServerSentEvent(
+            data=ProgressEvent(
+                stage="validating",
+                status="error",
+                detail=str(exc),
+            ).model_dump(),
+            event="error",
+            retry=0,
+        )
+        return
+    except proxy_service.DuplicateDomainError:
+        yield ServerSentEvent(
+            data=ProgressEvent(
+                stage="validating",
+                status="error",
+                detail="duplicate",
+            ).model_dump(),
+            event="error",
+            retry=0,
+        )
+        return
+    except Exception as exc:
+        yield ServerSentEvent(
+            data=ProgressEvent(
+                stage="creating_container",
+                status="error",
+                detail=str(exc),
+            ).model_dump(),
+            event="error",
+            retry=0,
+        )
+        return
+
+    for stage_name in ["creating_container", "rendering_nginx", "reloading_nginx"]:
+        yield ServerSentEvent(
+            data=ProgressEvent(stage=stage_name, status="done").model_dump(),
+            event="progress",
+        )
+    yield ServerSentEvent(
+        data=ProgressEvent(stage="done", status="done", tg_url=tg_url).model_dump(),
+        event="done",
+        retry=0,
+    )
 
 
 @router.patch("/{instance_id}/start", response_model=ProxyInstanceResponse)
