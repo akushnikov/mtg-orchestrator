@@ -19,6 +19,14 @@ class FakeMessage:
         self.answer = AsyncMock()
 
 
+class FakeSessionContext:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+
 def _require_bot_handlers():
     if cmd_start is None:
         pytest.skip("bot handlers module not yet implemented")
@@ -46,6 +54,7 @@ async def test_start_command(monkeypatch):
 @pytest.mark.asyncio
 async def test_proxies_command_empty(monkeypatch):
     _require_bot_handlers()
+    monkeypatch.setattr(handlers_module, "AsyncSessionLocal", lambda: FakeSessionContext())
     monkeypatch.setattr(
         handlers_module.crud,
         "list_instances",
@@ -61,6 +70,7 @@ async def test_proxies_command_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_proxies_command_running(monkeypatch):
     _require_bot_handlers()
+    monkeypatch.setattr(handlers_module, "AsyncSessionLocal", lambda: FakeSessionContext())
     monkeypatch.setattr(
         handlers_module.crud,
         "list_instances",
@@ -69,7 +79,7 @@ async def test_proxies_command_running(monkeypatch):
                 SimpleNamespace(
                     domain="ria.ru",
                     status="running",
-                    tg_url="tg://proxy?server=1.2.3.4&port=443&secret=eeAA",
+                    secret="eeAA",
                 )
             ]
         ),
