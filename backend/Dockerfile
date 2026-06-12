@@ -9,6 +9,17 @@
 # when source or deps change.
 # =============================================================================
 
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
 FROM python:3.12-slim AS base
 
 # Prevent .pyc files, enable unbuffered stdout/stderr for live Docker logs.
@@ -18,14 +29,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /backend
 
 # Install dependencies in a separate layer to leverage Docker build cache.
-COPY pyproject.toml ./
+COPY backend/pyproject.toml ./
 # pip install in non-interactive mode; no cache to keep the image lean.
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .
 
 # Copy application source + entrypoint/healthcheck helpers.
-COPY app/ ./app/
-COPY entrypoint.sh healthcheck.py ./
+COPY backend/app/ ./app/
+COPY --from=frontend-builder /frontend/dist/ ./app/static/
+COPY backend/entrypoint.sh backend/healthcheck.py ./
 
 # Internal ports: 8080 (plain HTTP fallback) and 8443 (TLS panel).
 EXPOSE 8080 8443
