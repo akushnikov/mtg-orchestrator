@@ -13,10 +13,13 @@ volume). In development (no certs), run on plain HTTP for local verification.
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import aiogram
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.bot import handlers as bot_handlers
+from app.config import settings
 from app.db.engine import AsyncSessionLocal, engine
 from app.db.models import Base
 from app.services.docker_service import get_proxy_net_name
@@ -39,9 +42,20 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         # config to load on its own first start (it depends on this backend
         # being healthy before it boots).
         await write_startup_nginx_config(session)
+    if settings.bot_token:
+        bot_handlers.bot = aiogram.Bot(token=settings.bot_token)
+        await bot_handlers.bot.set_webhook(
+            url=f"https://{settings.panel_domain}/bot/webhook",
+            secret_token=settings.webhook_secret,
+            allowed_updates=["message"],
+            drop_pending_updates=True,
+        )
     try:
         yield
     finally:
+        if settings.bot_token and bot_handlers.bot is not None:
+            await bot_handlers.bot.delete_webhook()
+            await bot_handlers.bot.session.close()
         await engine.dispose()
 
 

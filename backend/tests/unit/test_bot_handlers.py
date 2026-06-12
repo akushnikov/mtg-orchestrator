@@ -2,12 +2,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 try:
     from app.bot import handlers as handlers_module
     from app.bot.handlers import bot, cmd_proxies, cmd_start, dp
+    from app.main import app
 except ImportError:
     handlers_module = None
+    app = None
     bot = None
     dp = None
     cmd_proxies = None
@@ -92,3 +95,38 @@ async def test_proxies_command_running(monkeypatch):
     assert "tg://proxy" in text
     assert "ria.ru" in text
     assert "🟢" in text
+
+
+@pytest.mark.asyncio
+async def test_webhook_wrong_secret_returns_403(monkeypatch):
+    _require_bot_handlers()
+    monkeypatch.setattr(handlers_module.settings, "webhook_secret", "expected-secret")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/bot/webhook",
+            json={"update_id": 1},
+            headers={"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_webhook_correct_secret_dispatches(monkeypatch):
+    _require_bot_handlers()
+    dispatch = AsyncMock(return_value=None)
+    monkeypatch.setattr(handlers_module.settings, "webhook_secret", "expected-secret")
+    monkeypatch.setattr(handlers_module, "bot", object())
+    monkeypatch.setattr(handlers_module.dp, "feed_webhook_update", dispatch)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/bot/webhook",
+            json={"update_id": 1},
+            headers={"X-Telegram-Bot-Api-Secret-Token": "expected-secret"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    dispatch.assert_awaited_once()
