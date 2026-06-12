@@ -1,23 +1,43 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { retrieveLaunchParams } from '@telegram-apps/sdk';
+import { retrieveRawInitData } from '@telegram-apps/sdk';
 
-type LaunchParams = {
-  initDataRaw?: string;
-  initData?: {
-    authDate?: Date | number | string;
-    user?: {
-      id?: number;
-    };
-  };
+type ParsedInitData = {
+  raw: string;
+  userId: number | null;
+  authDate: Date | null;
 };
 
-function readLaunchParams(): LaunchParams | null {
+// SDK v3: retrieveRawInitData() returns the raw init data query string (the
+// exact value the backend validates). retrieveLaunchParams() does NOT expose
+// initDataRaw/initData — it uses tgWebApp* keys — so we read the raw string and
+// parse user.id / auth_date out of it ourselves (version-proof).
+function readInitData(): ParsedInitData | null {
+  let raw: string | undefined;
   try {
-    return retrieveLaunchParams(true) as LaunchParams;
+    raw = retrieveRawInitData();
   } catch {
     return null;
   }
+  if (!raw) {
+    return null;
+  }
+
+  const params = new URLSearchParams(raw);
+
+  let userId: number | null = null;
+  try {
+    const user = JSON.parse(params.get('user') ?? '{}') as { id?: number };
+    userId = typeof user.id === 'number' ? user.id : null;
+  } catch {
+    userId = null;
+  }
+
+  const authDateSec = Number(params.get('auth_date'));
+  const authDate =
+    Number.isFinite(authDateSec) && authDateSec > 0 ? new Date(authDateSec * 1000) : null;
+
+  return { raw, userId, authDate };
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -29,16 +49,16 @@ export const useAuthStore = defineStore('auth', () => {
   const hasInitData = computed(() => initDataRaw.value.length > 0);
 
   function initialize(): boolean {
-    const params = readLaunchParams();
-    if (!params?.initDataRaw) {
+    const data = readInitData();
+    if (!data) {
       initDataRaw.value = '';
       userId.value = null;
       isValidated.value = false;
       return false;
     }
 
-    initDataRaw.value = params.initDataRaw;
-    userId.value = params.initData?.user?.id ?? null;
+    initDataRaw.value = data.raw;
+    userId.value = data.userId;
     isValidated.value = true;
     return true;
   }
@@ -49,12 +69,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function currentAuthDate(): Date | null {
-    const params = readLaunchParams();
-    const value = params?.initData?.authDate;
-    if (value instanceof Date) return value;
-    if (typeof value === 'number') return new Date(value * 1000);
-    if (typeof value === 'string') return new Date(Number(value) * 1000);
-    return null;
+    return readInitData()?.authDate ?? null;
   }
 
   return {

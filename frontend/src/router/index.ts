@@ -1,10 +1,11 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
-import { retrieveLaunchParams } from '@telegram-apps/sdk';
+import { retrieveRawInitData } from '@telegram-apps/sdk';
 
 function hasTelegramInitData(): boolean {
   try {
-    const params = retrieveLaunchParams(true) as { initDataRaw?: string };
-    return Boolean(params.initDataRaw);
+    // SDK v3: the raw init data string comes from retrieveRawInitData(), NOT
+    // from retrieveLaunchParams() (which exposes tgWebApp* keys, no initDataRaw).
+    return Boolean(retrieveRawInitData());
   } catch {
     return false;
   }
