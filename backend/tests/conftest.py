@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault("MOSCOW_IP", "1.2.3.4")
 os.environ.setdefault("PANEL_DOMAIN", "panel.example.com")
+os.environ.setdefault("BOT_TOKEN", "test:token123")
+os.environ.setdefault("OWNER_USER_ID", "12345")
 
 
 @pytest_asyncio.fixture
