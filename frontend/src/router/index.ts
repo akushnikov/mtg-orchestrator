@@ -1,10 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { retrieveLaunchParams } from '@telegram-apps/sdk';
 
-const PlaceholderView = {
-  template: '<van-empty description="Coming soon" />',
-};
-
 function hasTelegramInitData(): boolean {
   try {
     const params = retrieveLaunchParams(true) as { initDataRaw?: string };
@@ -23,22 +19,22 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/list',
     name: 'list',
-    component: PlaceholderView,
+    component: () => import('../views/ProxyList.vue'),
   },
   {
     path: '/proxy/:id',
     name: 'detail',
-    component: PlaceholderView,
+    component: () => import('../views/ProxyDetail.vue'),
   },
   {
     path: '/create',
     name: 'create',
-    component: PlaceholderView,
+    component: () => import('../views/CreateProxy.vue'),
   },
   {
     path: '/create/progress',
     name: 'create-progress',
-    component: PlaceholderView,
+    component: () => import('../views/CreateProgress.vue'),
   },
   {
     path: '/decoy',

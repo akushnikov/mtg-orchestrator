@@ -54,11 +54,41 @@ export const useProxyStore = defineStore('proxy', () => {
     }
   }
 
+  async function start(id: number): Promise<boolean> {
+    const response = await api.patch(`/api/v1/instances/${id}/start`);
+    if (!response.ok) return false;
+    await fetchAll();
+    return true;
+  }
+
+  async function stop(id: number): Promise<boolean> {
+    const response = await api.patch(`/api/v1/instances/${id}/stop`);
+    if (!response.ok) return false;
+    await fetchAll();
+    return true;
+  }
+
+  async function remove(id: number): Promise<boolean> {
+    const response = await api.delete(`/api/v1/instances/${id}`);
+    if (!response.ok) return false;
+    instances.value = instances.value.filter((instance) => instance.id !== id);
+    return true;
+  }
+
+  function findById(id: number): ProxyInstance | DefaultProxy | undefined {
+    if (id === -1) return defaultProxy.value ?? undefined;
+    return instances.value.find((instance) => instance.id === id);
+  }
+
   return {
     instances,
     defaultProxy,
     loading,
     error,
     fetchAll,
+    start,
+    stop,
+    remove,
+    findById,
   };
 });
