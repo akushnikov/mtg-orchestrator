@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.auth import OwnerUserID
 from app.db import crud
 from app.db.engine import AsyncSessionLocal
 from app.db.models import ProxyInstance
@@ -56,6 +57,7 @@ def _to_response(row: ProxyInstance, tg_url: str = "") -> ProxyInstanceResponse:
     response_model=ProxyInstanceResponse,
 )
 async def create_instance(
+    _user_id: OwnerUserID,
     body: CreateInstanceRequest,
     session: AsyncSession = Depends(async_db_session),
 ) -> ProxyInstanceResponse:
@@ -77,6 +79,7 @@ async def create_instance(
 
 @router.get("/", response_model=list[ProxyInstanceResponse])
 async def list_instances(
+    _user_id: OwnerUserID,
     session: AsyncSession = Depends(async_db_session),
 ) -> list[ProxyInstanceResponse]:
     rows = await crud.list_instances(session)
@@ -85,6 +88,7 @@ async def list_instances(
 
 @router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_instance(
+    _user_id: OwnerUserID,
     instance_id: int,
     session: AsyncSession = Depends(async_db_session),
 ) -> Response:
@@ -105,6 +109,7 @@ async def delete_instance(
 
 @router.patch("/{instance_id}/stop", response_model=ProxyInstanceResponse)
 async def stop_instance(
+    _user_id: OwnerUserID,
     instance_id: int,
     session: AsyncSession = Depends(async_db_session),
 ) -> ProxyInstanceResponse:
@@ -125,6 +130,7 @@ async def stop_instance(
 
 @router.patch("/{instance_id}/start", response_model=ProxyInstanceResponse)
 async def start_instance(
+    _user_id: OwnerUserID,
     instance_id: int,
     session: AsyncSession = Depends(async_db_session),
 ) -> ProxyInstanceResponse:

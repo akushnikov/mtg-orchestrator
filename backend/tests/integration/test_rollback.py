@@ -10,6 +10,7 @@ from app.api.v1 import instances
 from app.db.models import Base
 from app.main import app
 from app.services import docker_service, domain_validator, nginx_service, proxy_service
+from tests.conftest import owner_auth_headers
 
 
 @pytest_asyncio.fixture
@@ -38,7 +39,11 @@ async def client(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy_service.settings, "nginx_config_dir", str(tmp_path / "nginx"))
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as test_client:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=owner_auth_headers(),
+    ) as test_client:
         yield test_client
 
     await engine.dispose()
