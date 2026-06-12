@@ -10,12 +10,15 @@ Uvicorn is started with TLS in production (port 8443, SSL certs from Let's Encry
 volume). In development (no certs), run on plain HTTP for local verification.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiogram
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Scope
 
 from app.api.v1.router import api_router
 from app.bot import handlers as bot_handlers
@@ -28,6 +31,32 @@ from app.services.proxy_service import reconcile_on_startup, write_startup_nginx
 # Resolve paths relative to this file so the app works regardless of cwd.
 APP_DIR = Path(__file__).parent
 STATIC_DIR = APP_DIR / "static"
+
+# Configure root logging once so application loggers (app.*, aiogram.*) actually
+# emit under uvicorn. Without this the bot is effectively silent.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("app.main")
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve static assets, falling back to index.html for SPA client routes.
+
+    The Vue Mini App uses history-mode routing (/list, /create, /proxy/:id).
+    A hard refresh or deep link requests a path with no matching file; instead
+    of returning 404 we serve index.html so the client-side router takes over.
+    Paths under /api are excluded so unknown endpoints still return a real 404.
+    """
+
+    async def get_response(self, path: str, scope: Scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and not path.startswith("api"):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 @asynccontextmanager
@@ -96,6 +125,6 @@ app.include_router(api_router, prefix="/api/v1")
 # html=True makes StaticFiles serve index.html for directory requests.
 app.mount(
     "/",
-    StaticFiles(directory=str(STATIC_DIR), html=True),
+    SPAStaticFiles(directory=str(STATIC_DIR), html=True),
     name="static",
 )

@@ -18,8 +18,11 @@ except ImportError:
 
 
 class FakeMessage:
-    def __init__(self):
+    def __init__(self, user_id=12345):
         self.answer = AsyncMock()
+        # Real aiogram Message always carries from_user; mirror it so handlers
+        # can log the sender.
+        self.from_user = SimpleNamespace(id=user_id)
 
 
 class FakeSessionContext:
